@@ -1,0 +1,521 @@
+---
+title: "Scenariovergelijking obv. de ECOTIDE habitatmodule"
+author: "Nicolas Vanermen, gebaseerd op een IP script van Joost Vanoverbeke"
+output: html_document
+editor_options: 
+  chunk_output_type: inline
+---
+
+```{r libraries, include = FALSE}
+
+library(tidyverse)
+library(janitor)
+library(writexl)
+library(RColorBrewer)
+
+```
+
+```{r sources, include = FALSE}
+
+source("../../../../../Basis/src/afstanden_updated.R")
+source("../../../../../Basis/src/referentie_oppervlaktes_updated.R")
+
+# Afst.monding.grens <- 65
+# Afst.monding.merelbeke <- 169 
+
+Afst.OMES <- Afst.OMES %>% 
+  mutate(omes_xlabel = paste0(omes, "\n", afstand_monding, " km"))
+
+```
+
+```{r alternatieven en scenarios, include = FALSE}
+
+alternatives <-
+  c("REF_2020")
+
+scenarios <-
+  c("Scaldis", "HIC")
+
+scenario1 <- "Scaldis"
+scenario2 <- "HIC"
+
+scenario_colors <- c("Scaldis" = "orange1",
+                     "HIC" = "orange3")
+
+graph_title <- "Scaldis minus HIC: "
+
+omes_selectie <- c("14","15","16","17","18","19")
+
+# alternatives <-
+#   c("REF")
+# 
+# scenarios <-
+#   c("2020_Habmap", "2019_Ecotoop")
+# 
+# scenario1 <- "2020_Habmap"
+# scenario2 <- "2019_Ecotoop"
+# 
+# scenario_colors <- c("2020_Habmap" = "orange1", 
+#                      "2019_Ecotoop" = "orange3")
+# 
+# graph_title <- "Habmap vs. Ecotoop: "
+# 
+# omes_selectie <- c("14","15","16","17","18","19")
+
+```
+
+```{r pathways}
+
+output_path <- "../../../Output/Fysiotopen/habitat_kenmerken/figuren_Scaldis_vs_HIC_ext/"
+input_path <- "../../../Output/Fysiotopen/habitat_kenmerken/tabellen_Scaldis_vs_HIC/"
+
+# output_path <- "../../../Output/Fysiotopen/habitat_kenmerken/figuren_habmap_vs_ecotoop_ext/"
+# input_path <- "../../../Output/Fysiotopen/habitat_kenmerken/tabellen_habmap_vs_ecotoop/"
+
+```
+
+```{r ophalen basisgegevens, include = FALSE}
+
+# data inladen uit ...PRJ_reservegebieden/Output/Fysiotopen/habitat_kenmerken/...
+Data_oppervlakte <- NULL
+for(scen in scenarios) {
+  for(alt in alternatives) {
+    # cat(str_c("scenario = ", scen, ";  alternatief = ", alt, "\n"))
+    file_name <-
+      str_c(paste0(input_path, "Habmap"), 
+            alt, scen, "km.csv",
+            sep = "_")
+    Data_oppervlakte <-
+      Data_oppervlakte %>% 
+      bind_rows(read_delim(file_name, 
+                           delim = ";", 
+                           escape_double = FALSE, 
+                           locale = locale(decimal_mark = ".", 
+                                           grouping_mark = ""), 
+                           trim_ws = TRUE) %>% 
+                  clean_names() %>% 
+                  mutate(alternative = alt,
+                         scenario = scen) %>% 
+                  select(-shape_length))
+  }
+}
+
+table(Data_oppervlakte$scenario)
+table(Data_oppervlakte$omessegment)
+table(Data_oppervlakte$scenario, Data_oppervlakte$omessegment)
+#vergelijkingen kunnen enkel voor Beneden- en Boven-Zeeschelde!
+table(Data_oppervlakte$model_gebied_c)
+table(Data_oppervlakte$habmap)
+table(Data_oppervlakte$habmap2, Data_oppervlakte$scenario)
+
+Data_oppervlakte %>% group_by(scenario) %>% summarise(opp = sum(shape_area/10000)) %>% pull(opp)
+
+# in het geval HIC-Scaldis het verschil heel groot: bijna 700 ha! 
+# -> Durme, Rupel en Gent-Melle zitten niet in HIC habitatmapping-kaart
+
+# in het geval van habmap is hier een verschil in opp van 10 hectare; dit is minder dan 1% maar toch 
+# -> zie discussie ivm Mask issues (discrepantie tussen de mask en de habmap-extent!)
+# -> bij nader inzien heeft een vergelijking met de ecotopenkaart van 2019 weinig zin behalve mss voor harde substraten?
+```
+
+```{r dataselectie, include = FALSE}
+
+# selecteren van OMES zones en minimale data wrangling
+Data_oppervlakte_selectie <-
+  Data_oppervlakte %>% 
+  rename(omes = omessegment,
+         krw_zone = kr_wzone,
+         ecotope = habmap,
+         ecotope2 = habmap2) %>% 
+  filter(omes %in% omes_selectie,
+         # de volgende filter is om ecotopen in of nabij de monding van zijrivieren weg te filteren
+         km > 40) %>% 
+  mutate(omes = as.integer(omes),
+         afstand_grens = round(km),
+         afstand_monding = round(km) + 65,
+         alternative = factor(alternative, levels = alternatives),
+         scenario = factor(scenario, levels = scenarios))
+
+test <- Data_oppervlakte_selectie %>% group_by(scenario) %>% summarise(opp = sum(shape_area/10000))
+test$opp[2] - test$opp[1]
+# 0.038 hectare
+# dit is uiteindelijk het gevolg van minuscule verschillen langsheen de randen -> op zich geen probleem! 
+# (zie ook ArcGIS project & export)
+```
+
+```{r definiëring ecologisch relevante ecotopen, include = FALSE}
+
+ecol_relevant <- c("diep subtidaal", "matig diep subtidaal", "ondiep subtidaal", 
+                   "slik", "hard substraat",
+                   "supralitoraal",
+                   "buiten estuarien gebied")
+ecol_relevant_labels <- c(slik = "Slik",
+                          `hard substraat` = "Slik",
+                          supralitoraal = "Schor",
+                          `ondiep subtidaal` = "Subtidaal", 
+                          `matig diep subtidaal` = "Subtidaal",
+                          `diep subtidaal` = "Subtidaal",
+                          `buiten estuarien gebied` = "Buiten-estuarien")
+
+ecol_relevant_delta <- c("laagdynamisch subtidaal", "slik", "supralitoraal")
+ecol_relevant_delta_labels <- c(`laagdynamisch subtidaal` = "Laagdynamisch subtidaal",
+                                slik = "Slik",
+                                supralitoraal = "Schor")
+
+# De reden voor deze tweedeling moet nog eens uitgezocht worden, met ondiep subtidaal enerzijds en laagdynamisch subtidaal anderzijds (en deze laatste neemt dus ook (matig) diep subtidaal mee)
+# Ook het gebruik van 'delta' werkt verwarrend, aangezien deze term ook voor dit script gebruikt wordt voor verschillen tussen alternatieven
+```
+
+```{r data aggregeren per OMES segment, include = FALSE}
+
+table(Data_oppervlakte_selectie$model_gebied_c)
+sum(table(Data_oppervlakte_selectie$model_gebied_c)) == nrow(Data_oppervlakte_selectie)
+# GOG-wetland moet hier buiten gelaten worden
+unique(Data_oppervlakte_selectie$ecotope)
+unique(Data_oppervlakte_selectie$ecotope2)
+# ecotope2 is een veralgemening van ecotope (geen onderverdeling van slikhabitats, en geen onderscheid hoog- vs laagdynamisch)
+
+# Voor de aggregatie van de ecotoop-oppervlaktes per scenario, alternatief en OMES-zone wordt GOG-habitat in de kolom 'model_gebied_C' uitgesloten
+# Er wordt ook een trucje toegepast om GGG oppervlaktes voor 15% toe te wijzen aan slik en 85% aan schor
+# De afstanden per OMES zone worden gekoppeld en de ecotoopnamen worden vertaald naar 'label'-waarden adhv een moeilijk interpreteerbaar commando ('!!!')
+
+Data_OMES <-
+  Data_oppervlakte_selectie %>%
+  filter(ecotope2 %in% c(ecol_relevant, "GGG habitat"),
+         !(model_gebied_c %in% c("GOG-wetland"))) %>% 
+  (function(data) 
+  {
+    data %>% 
+      filter(ecotope2 != "GGG habitat") %>% 
+      bind_rows(data %>% filter(ecotope2 == "GGG habitat") %>% 
+                  mutate(ecotope2 = "slik",
+                         shape_area = 0.15*shape_area)) %>% 
+      bind_rows(data %>% filter(ecotope2 == "GGG habitat") %>% 
+                  mutate(ecotope2 = "supralitoraal",
+                         shape_area = 0.85*shape_area))
+  }) %>% 
+  mutate(ecotope_labels = recode_factor(ecotope2, !!!ecol_relevant_labels)) %>% 
+  group_by(scenario, alternative, omes, ecotope_labels) %>% 
+  summarise(oppervlakte = sum(shape_area)/10000,
+            unit = "ha") %>% 
+  ungroup() %>% 
+  left_join(Afst.OMES %>% mutate(omes = as.integer(omes))) %>% 
+  left_join(OMES.min.opp.long %>% rename(ecotope_labels = ecotope)) %>% 
+  mutate(ecotope_labels = factor(ecotope_labels, levels = c("Buiten-estuarien", "Schor", "Slik", "Subtidaal"))) %>% 
+  select(scenario, alternative, omes, ecotope_labels, oppervlakte, unit, afstand_monding, afstand_merelbeke,
+         minimal_area, length, area_km, omes_xlabel)
+
+str(Data_OMES)
+summary(Data_OMES)
+```
+
+```{r figuren oppervlakte per OMES segment, echo = FALSE}
+
+# deze chunk produceert: 
+# 1. figuren met ecotoop-oppervlaktes  per scenario, alternatief en OMES zone
+# 2. figuren met procentuele toe- of afnames in ecotoop-oppervlakte  per scenario en OMES zone, tussen alternatieven 2050REF_C & 2050C3
+
+Data_OMES %>% rename(Alternatief = alternative) %>% 
+  ggplot(aes(omes, oppervlakte, group = scenario)) +
+  geom_col(aes(fill = scenario), position = "dodge") +
+  labs(fill = "") +
+  scale_fill_manual(values = scenario_colors) + 
+  geom_segment(aes(x = omes-0.4, xend = omes+0.4, y = minimal_area, yend = minimal_area, color = "IHD oppervlakte"), linewidth = 1, alpha = 0.3) +
+  scale_x_continuous(breaks = 14:19, labels = unique(Data_OMES$omes_xlabel)[order(unique(Data_OMES$omes))]) +
+  scale_color_manual(name = " ", values = "blue") +
+  labs(x = "OMES zone \n Afstand tot monding",
+       y = "Oppervlakte (ha)") +
+  facet_grid(ecotope_labels ~ Alternatief,
+             scales = "free_y",
+             labeller = labeller(Alternatief = label_both)) +
+  theme_bw() + 
+  theme(strip.background = element_blank(),
+        strip.text.x = element_text(size = 12, hjust = 0.05),
+        strip.text.y = element_text(size = 10),
+        axis.text = element_text(size = 8))
+  ggsave(paste0(output_path, "OMES_fysiotope_area.jpg"), width = 8, height = 6)
+
+  
+for(s in scenarios) {
+  
+  {Data_OMES %>% rename(Alternatief = alternative) %>% 
+    filter(scenario == s) %>% 
+    ggplot(aes(omes, oppervlakte)) +
+    geom_col(aes(fill = scenario), position = "dodge") +
+    labs(fill = "") +
+    scale_fill_manual(values = scenario_colors) + 
+    geom_segment(aes(x = omes-0.4, xend = omes+0.4, y = minimal_area, yend = minimal_area, color = "IHD oppervlakte"), linewidth = 1, alpha = 0.5) +
+    scale_x_continuous(breaks = 14:19, labels = unique(Data_OMES$omes_xlabel)[order(unique(Data_OMES$omes))]) +
+    scale_color_manual(name = " ", values = "blue") +
+    labs(x = "OMES zone \n Afstand tot monding",
+         y = "Oppervlakte (ha)") +
+    facet_grid(ecotope_labels ~ Alternatief,
+               scales = "free_y",
+             labeller = labeller(Alternatief = label_both)) +
+    theme_bw() + 
+    theme(strip.background = element_blank(),
+          strip.text.x = element_text(size = 12, hjust = 0.05),
+          strip.text.y = element_text(size = 10),
+          axis.text = element_text(size = 8))} %>% 
+    print()
+
+  ggsave(str_c(output_path, "OMES_fysiotope_area_", s, ".jpg"), width = 8, height = 6)
+}
+```
+
+```{r figuren procentuele toename/afname per OMES segment, echo = FALSE}
+
+Data_OMES_gain_loss <- Data_OMES %>%
+  group_by(alternative, omes, ecotope_labels, afstand_merelbeke, omes_xlabel) %>%
+  mutate(oppervlakte = (oppervlakte - oppervlakte[scenario == scenario2])/oppervlakte[scenario == scenario2]*100) %>%
+  ungroup()
+
+y_max <- max(abs(Data_OMES_gain_loss$oppervlakte))*1.05
+y_limits <- c(-y_max, y_max)
+
+Data_OMES_gain_loss  %>%
+  filter(scenario == scenario1) %>% 
+  mutate(sign = ifelse(oppervlakte >= 0, "Toename", "Verlies"),
+         scenario = paste0(graph_title, "procentuele verschillen")) %>%
+  ggplot(aes(omes, oppervlakte, fill = sign)) +
+  labs(fill = "") +
+  scale_fill_manual(values = c("chartreuse4","red3")) +
+  geom_col(position = "dodge") +
+  scale_x_continuous(breaks = 14:19, labels = unique(Data_OMES$omes_xlabel)[order(unique(Data_OMES$omes))]) +
+  labs(x = "OMES zone \n Afstand tot monding",
+       y = "Procentuele verandering (%)") +
+  facet_grid(ecotope_labels ~ scenario,
+             scales = "free_y") +
+  theme_bw() +
+  theme(strip.background = element_blank(),
+        strip.text.x = element_text(size = 12, hjust = 0.1),
+        strip.text.y = element_text(size = 10),
+        axis.text = element_text(size = 8),
+        legend.position = "right")
+  ggsave(paste0(output_path, "OMES_fysiotope_gain_loss_1_pct.jpg"), width = 8, height = 6)
+  
+  
+# y-as fixeren:
+Data_OMES_gain_loss  %>%
+  filter(scenario == scenario1) %>% 
+  mutate(sign = ifelse(oppervlakte >= 0, "Toename", "Verlies"),
+         scenario = paste0(graph_title, "procentuele verschillen")) %>%
+  ggplot(aes(omes, oppervlakte, fill = sign)) +
+  labs(fill = "") +
+  scale_fill_manual(values = c("chartreuse4","red3")) +
+  geom_col(position = "dodge") +
+  scale_x_continuous(breaks = 14:19, labels = unique(Data_OMES$omes_xlabel)[order(unique(Data_OMES$omes))]) +
+  scale_y_continuous(limits = y_limits) +
+  labs(x = "OMES zone \n Afstand tot monding",
+       y = "Procentuele verandering (%)") +
+  facet_grid(ecotope_labels ~ scenario) +
+  theme_bw() +
+  theme(strip.background = element_blank(),
+        strip.text.x = element_text(size = 12, hjust = 0.1),
+        strip.text.y = element_text(size = 10),
+        axis.text = element_text(size = 8),
+        legend.position = "right")
+  ggsave(paste0(output_path, "OMES_fysiotope_gain_loss_1_pct_y_fix.jpg"), width = 8, height = 6)  
+
+```
+
+```{r figuren absolute toename/afname per OMES segment, echo = FALSE}
+
+Data_OMES_gain_loss_ABS <- Data_OMES %>%
+  group_by(alternative, omes, ecotope_labels, afstand_merelbeke, omes_xlabel) %>%
+  mutate(oppervlakte = (oppervlakte - oppervlakte[scenario == scenario2])) %>%
+  ungroup()
+
+y_max_abs <- max(abs(Data_OMES_gain_loss_ABS$oppervlakte))*1.05
+y_limits_abs <- c(-y_max_abs, y_max_abs)
+
+Data_OMES_gain_loss_ABS  %>%
+  filter(scenario == scenario1) %>% 
+  mutate(sign = ifelse(oppervlakte >= 0, "Toename", "Verlies"),
+         scenario = paste0(graph_title, "absolute verschillen")) %>%
+  ggplot(aes(omes, oppervlakte, fill = sign)) +
+  labs(fill = "") +
+  scale_fill_manual(values = c("chartreuse4","red3")) +
+  geom_col(position = "dodge") +
+  scale_x_continuous(breaks = 14:19, labels = unique(Data_OMES$omes_xlabel)[order(unique(Data_OMES$omes))]) +
+  labs(x = "OMES zone \n Afstand tot monding",
+       y = "Absolute verandering (ha)") +
+  facet_grid(ecotope_labels ~ scenario,
+             scales = "free_y") +
+  theme_bw() +
+  theme(strip.background = element_blank(),
+        strip.text.x = element_text(size = 12, hjust = 0.1),
+        strip.text.y = element_text(size = 10),
+        axis.text = element_text(size = 8),
+        legend.position = "right")
+  ggsave(paste0(output_path, "OMES_fysiotope_gain_loss_2_abs.jpg"), width = 8, height = 6)
+  
+  
+# y-as fixeren:
+Data_OMES_gain_loss_ABS  %>%
+  filter(scenario == scenario1) %>% 
+  mutate(sign = ifelse(oppervlakte >= 0, "Toename", "Verlies"),
+         scenario = paste0(graph_title, "absolute verschillen")) %>%
+  ggplot(aes(omes, oppervlakte, fill = sign)) +
+  labs(fill = "") +
+  scale_fill_manual(values = c("chartreuse4","red3")) +
+  geom_col(position = "dodge") +
+  scale_x_continuous(breaks = 14:19, labels = unique(Data_OMES$omes_xlabel)[order(unique(Data_OMES$omes))]) +
+  scale_y_continuous(limits = y_limits_abs) +
+  labs(x = "OMES zone \n Afstand tot monding",
+       y = "Absolute verandering (ha)") +
+  facet_grid(ecotope_labels ~ scenario) +
+  theme_bw() +
+  theme(strip.background = element_blank(),
+        strip.text.x = element_text(size = 12, hjust = 0.1),
+        strip.text.y = element_text(size = 10),
+        axis.text = element_text(size = 8),
+        legend.position = "right")
+  ggsave(paste0(output_path, "OMES_fysiotope_gain_loss_2_abs_y_fix.jpg"), width = 8, height = 6)  
+
+```
+
+```{r data aggregeren per km, include = FALSE}
+# Dit is een zeer vergelijkbaar met de aanmaak van Data_OMES
+# Aangezien de kms over de OMES grenzen lopen wordt wel eerst per km de OMES zone toegewezen met het laagste volgnummer
+
+Data_km <-
+  Data_oppervlakte_selectie %>% 
+  group_by(afstand_monding) %>% 
+  mutate(omes = min(omes)) %>% 
+  ungroup() %>% 
+  filter(ecotope2 %in% c(ecol_relevant, "GGG habitat"),
+         !(model_gebied_c %in% c("GOG-wetland"))) %>% 
+  (function(data) 
+    {
+    data %>% 
+      filter(ecotope2 != "GGG habitat") %>% 
+      bind_rows(data %>% filter(ecotope2 == "GGG habitat") %>% 
+                  mutate(ecotope2 = "slik",
+                         shape_area = 0.15*shape_area)) %>% 
+      bind_rows(data %>% filter(ecotope2 == "GGG habitat") %>% 
+                  mutate(ecotope2 = "supralitoraal",
+                         shape_area = 0.85*shape_area))
+  }) %>% 
+  mutate(ecotope_labels = recode_factor(ecotope2, !!!ecol_relevant_labels),
+         ecotope_labels = factor(ecotope_labels, levels = c("Buiten-estuarien", "Schor", "Slik", "Subtidaal"))) %>%
+  group_by(scenario, alternative, afstand_monding, omes, ecotope_labels) %>% 
+  summarise(oppervlakte = sum(shape_area)/10000,
+            unit = "ha") %>% 
+  ungroup() %>% 
+  select(scenario, alternative, afstand_monding, omes, ecotope_labels, oppervlakte, unit) %>% 
+  left_join((.) %>% 
+              filter(scenario == scenario2) %>% 
+              rename(oppervlakte_ref = oppervlakte) %>% 
+              select(-scenario)) %>%
+  mutate(delta_opp = oppervlakte - oppervlakte_ref)
+
+```
+
+```{r figuren oppervlakte per km, echo = FALSE, warning = FALSE}
+
+# transformatiefunctie voor de kleurschaal van de plot:
+pow_3_sign_trans <- function() scales::trans_new("pow_3_sign", function(x) sign(x)*(abs(x)^(1/3)), function(x) sign(x)*(abs(x)^3))
+myPalette1 <- colorRampPalette(brewer.pal(9, "RdYlGn"))
+myPalette2 <- colorRampPalette(brewer.pal(8, "YlOrBr"))
+
+Data_km %>% filter(afstand_monding < 166) %>% 
+  {ggplot(., aes(x = afstand_monding, y = alternative)) +
+      geom_tile(aes(fill = oppervlakte)) +
+      scale_fill_gradientn(name = "Oppervlakte (ha)",
+                           colours = myPalette1(100),
+                           trans = "pow_3_sign",
+                           breaks = c(0, 1, 10, 20, 50),
+                           na.value = "grey85") +
+      scale_color_discrete(name = "") +
+      geom_vline(data = Afst.sal, aes(xintercept = afstand_monding), linetype = 3, color = "grey25") +
+      geom_text(data = Afst.sal,
+                aes(x = afstand_monding, y = levels(.$alternative)[nlevels(.$alternative)], label = locatie),
+                angle = 90, size = 3, nudge_x = -2, nudge_y = -0.5, hjust = "left", 
+                color = "grey25") +
+      scale_y_discrete(limits = rev(levels(.$alternative))) +
+      scale_x_continuous(limits = c(105, 165), breaks = seq(105, 165, by = 10)) +
+      labs(x = "Afstand tot monding (km)",
+           y = "") +
+      facet_grid(ecotope_labels ~ scenario) +
+      theme_bw() +
+      theme(strip.background = element_blank(),
+        strip.text.x = element_text(size = 10, hjust = 0.1),
+        strip.text.y = element_text(size = 10),
+        axis.text = element_text(size = 8),
+        legend.position = "right")}
+# ggsave(paste0(output_path, "km_fysiotope_area_A.jpg"), width = 10, height = 6)
+
+Data_km %>% filter(afstand_monding < 166) %>% 
+  {ggplot(., aes(x = afstand_monding, y = alternative)) +
+      geom_tile(aes(fill = oppervlakte)) +
+      scale_fill_gradientn(name = "Oppervlakte (ha)",
+                           colours = myPalette2(100),
+                           trans = "pow_3_sign",
+                           breaks = c(0, 1, 10, 20, 50),
+                           na.value = "grey85") +
+      scale_color_discrete(name = "") +
+      geom_vline(data = Afst.sal, aes(xintercept = afstand_monding), linetype = 3, color = "grey25") +
+      geom_text(data = Afst.sal,
+                aes(x = afstand_monding, y = levels(.$alternative)[nlevels(.$alternative)], label = locatie),
+                angle = 90, size = 3, nudge_x = -2, nudge_y = -0.5, hjust = "left", 
+                color = "grey25") +
+      scale_y_discrete(limits = rev(levels(.$alternative))) +
+      scale_x_continuous(limits = c(105, 165), breaks = seq(105, 165, by = 10)) +
+      labs(x = "Afstand tot monding (km)",
+           y = "") +
+      facet_grid(ecotope_labels ~ scenario) +
+      theme_bw() +
+      theme(strip.background = element_blank(),
+        strip.text.x = element_text(size = 10, hjust = 0.1),
+        strip.text.y = element_text(size = 10),
+        axis.text = element_text(size = 8),
+        legend.position = "right")}
+ggsave(paste0(output_path, "km_fysiotope_area.jpg"), width = 10, height = 6)
+```
+
+```{r figuren delta per km, echo = FALSE, warning = FALSE}
+
+myPalette3 <- colorRampPalette(brewer.pal(12, "RdBu"))
+
+Data_km %>% filter(afstand_monding < 166, scenario == scenario1) %>% 
+  {ggplot(., aes(x = afstand_monding, y = alternative)) +
+      geom_tile(aes(fill = delta_opp)) +
+      scale_fill_gradientn(name = expression(paste("Toename/afname\noppervlakte (ha)\n(Scaldis minus HIC)")),
+                           colours = myPalette3(100),
+                           trans = "pow_3_sign",
+                           limits = c(-max(abs(.$delta_opp), na.rm = TRUE),
+                                      max(abs(.$delta_opp), na.rm = TRUE))) +
+      scale_color_discrete(name = "") +
+      geom_vline(data = Afst.sal, aes(xintercept = afstand_monding), linetype = 3, color = "grey25") +
+      geom_text(data=Afst.sal,
+                aes(x = afstand_monding, y = levels(.$alternative)[nlevels(.$alternative)], label = locatie),
+                angle = 90, size = 3, nudge_x = -2, nudge_y = -0.5, hjust = "left", 
+                color = "grey25") +
+      scale_y_discrete(limits = rev(levels(.$alternative))) +
+      scale_x_continuous(limits = c(105, 165), breaks = seq(105, 165, by = 10)) +
+      labs(x = "Afstand tot monding (km)",
+           y = "") +
+      facet_grid(ecotope_labels ~ scenario) +
+      theme_bw() +
+      theme(strip.background = element_blank(),
+        strip.text.x = element_text(size = 10, hjust = 0.1),
+        strip.text.y = element_text(size = 10),
+        axis.text = element_text(size = 8),
+        legend.position = "right")}
+ggsave(paste0(output_path, "km_fysiotope_area_gain_loss.jpg"), width = 8, height = 6)
+```
+
+### scripts vergelijken
+library(diffobj)
+diffFile("./r_scripts/Verwerking_fysiotopen_sc1_vs_sc2_ext_edited.Rmd","./r_scripts/Verwerking_fysiotopen_sc1_vs_sc2_ext_final.Rmd")
+
+### controle:
+test1 <- Data_OMES_gain_loss_ABS %>% group_by(omes, scenario) %>% summarise(balans = sum(oppervlakte))
+view(test1)
+test2 <- Data_OMES %>% group_by(scenario) %>% summarise(opp = sum(oppervlakte))
+view(test2)
+
+sum(test1$balans)
+test2$opp[1] - test2$opp[2]
+#heel klein verschil in extent tussen beide scenario's?
