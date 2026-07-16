@@ -1,0 +1,279 @@
+---
+title: "03_HIC_percentielen_uitdunning_LW"
+author: "Nicolas Vanermen"
+date: "2026-04-29"
+last run: "2026-04-29 16:10"
+---
+
+```{r}
+
+library(tidyverse)
+library(sf)
+library(readxl)
+library(purrr)
+library(zoo)
+
+# pathways
+path_data_lw_hw       <- "../../../../Aangeleverd/20260410_WL_DD_LW_HW/Statistics HW LW 4QNplusQE.xlsx"
+path_alloc_gdb        <- "../../../../../Ecotoop/Fysiotoop/BASIS_Ecotopen_GETIJ_ETRS.gdb"
+
+output_fig <- "../../Output/Uitdunning/Figuren_LW10_HW90"
+
+# codering riviersegmenten
+rivier <- c("1" = "Zeeschelde", 
+            "2" = "Rupel", 
+            "3" = "Durme",
+            "4" = "Tijarm_Gentbrugge", 
+            "5" = "Nete", 
+            "6" = "Dijle", 
+            "7" = "Zenne",
+            "8" = "Kleine_Nete",
+            "10" = "Tijarm_Zwijnaarde")
+
+if (!dir.exists(output_fig)) dir.create(output_fig, recursive = TRUE)
+
+```
+
+```{r}
+
+# call LW10
+data_long_lw <- read_excel(path_data_lw_hw, sheet = 1) %>%
+  rename(LW = 1) %>%
+  mutate(across(everything(), ~ str_remove(str_remove(str_trim(.), "LW "), " %"))) %>%
+  mutate(across(everything(), as.numeric)) %>%
+  
+  filter(LW %in% c(10)) %>%
+  select(!LW) %>% 
+  pivot_longer(everything(), names_to = "AllocNR", values_to = "Scaldis_LW10") %>%
+  mutate(AllocNR = as.character(as.integer(str_remove(AllocNR, "INBOpt_"))))
+
+
+# call HW90
+data_long_hw <- read_excel(path_data_lw_hw, sheet = 2) %>%
+  rename(HW = 1) %>%
+  mutate(across(everything(), ~ str_remove(str_remove(str_trim(.), "HW "), " %"))) %>%
+  mutate(across(everything(), as.numeric)) %>%
+  
+  filter(HW %in% c(90)) %>%
+  select(!HW) %>% 
+  pivot_longer(everything(), names_to = "AllocNR", values_to = "Scaldis_HW90") %>%
+  mutate(AllocNR = as.character(as.integer(str_remove(AllocNR, "INBOpt_"))))
+
+```
+
+```{r}
+
+# call allocatiegrid 
+sf_alloc <- st_read(dsn = path_alloc_gdb, layer = "AllocatieAspntScheldeRupelbekkenETRS", quiet = TRUE) 
+
+sf_data_clean <- sf_alloc %>%
+  st_drop_geometry() %>%
+  select(AllocNR, SegmentID, Dist) %>% 
+  mutate(AllocNR = as.character(as.integer(AllocNR))) %>% 
+  # hetvolgende zorgt er voor dat enkel unieke AllocNR's worden behouden
+  distinct()
+
+```
+
+```{r}
+
+# finale dataset
+df_lw_hw_validation <- sf_data_clean %>%
+  left_join(data_long_lw, by = "AllocNR") %>% 
+  left_join(data_long_hw, by = "AllocNR") %>% 
+  mutate(
+    SegmentID = as.factor(SegmentID),
+    rivier = recode_factor(SegmentID, !!!rivier)) %>% 
+  filter(
+    Dist > 0) %>%
+    # Dist > 0,
+    # # wat hier volgt is een algemene opkuis van extreme waarden (visuele check)
+    # case_when(
+    #   rivier == "Nete"       ~ Scaldis_LW10 < 6,
+    #   rivier == "Durme"      ~ Scaldis_LW10 < 5.5 & Scaldis_LW10 > -1,
+    #   rivier == "Kleine_Nete" ~ Scaldis_LW10 < 6.5,
+    #   TRUE                   ~ TRUE) | is.na(Scaldis_LW10)) %>%
+  arrange(rivier, Dist) %>%  
+  group_by(rivier) %>% 
+  # wat hier volgt is poging om outliers te definiëren op basis van het verschil met het running mean over 20 waarden
+  # waterpeilen die meer dan 20 cm afwijken van dit running mean worden "gevlagd"
+  mutate(
+    rolling_avg_LW10 = rollapply(Scaldis_LW10, width = 20, FUN = mean,  na.rm = TRUE, fill = NA, align = "center"),
+    delta_LW10 = abs(Scaldis_LW10 - rolling_avg_LW10),
+    outlier_LW10 = delta_LW10 > 0.2,
+    
+    rolling_avg_HW90 = rollapply(Scaldis_HW90, width = 20, FUN = mean,  na.rm = TRUE, fill = NA, align = "center"),
+    delta_HW90 = abs(Scaldis_HW90 - rolling_avg_HW90),
+    outlier_HW90 = delta_HW90 > 0.2) %>% 
+  ungroup()
+
+```
+
+```{r}
+
+#Plotjes maken:
+for (i in c("Zeeschelde", "Rupel", "Durme", "Nete", "Kleine_Nete", "Dijle", "Zenne"))
+{
+ggplot() + 
+  geom_line(data = df_lw_hw_validation %>% filter(rivier == i),
+           aes(Dist/1000, Scaldis_LW10), color = "#4393C3") +
+  # geom_line(data = df_lw_hw_validation %>% filter(rivier == i, !outlier_LW10 %in% c(TRUE)), 
+  #            aes(Dist/1000, Scaldis_LW10), color = "#4393C3") + 
+  # geom_point(data = df_lw_hw_validation %>% filter(rivier == i, outlier_LW10 %in% c(TRUE)),
+  #             aes(Dist/1000, Scaldis_LW10, color = "Outliers")) +
+  scale_color_manual(values = c("Outliers" = "red")) +
+  theme_minimal() + 
+  labs(
+      title = paste("LW10 Scaldis:", i),
+      x = "Afstand (km)", y = "Waterstand (m TAW)",
+      color = "")
+
+ggsave(
+    filename = file.path(output_fig, paste0("03_plot_Scaldis_", i, "_LW10_all_data.png")),
+    # filename = file.path(output_fig, paste0("03_plot_Scaldis_", i, "_LW10_outliers.png")),
+    width = 8, height = 5, dpi = 300, bg = "white")
+
+
+ggplot() + 
+  geom_line(data = df_lw_hw_validation %>% filter(rivier == i),
+           aes(Dist/1000, Scaldis_HW90), color = "#4393C3") +
+  # geom_line(data = df_lw_hw_validation %>% filter(rivier == i, !outlier_HW90 %in% c(TRUE)), 
+  #            aes(Dist/1000, Scaldis_HW90), color = "#4393C3") + 
+  # geom_point(data = df_lw_hw_validation %>% filter(rivier == i, outlier_HW90 %in% c(TRUE)),
+  #            aes(Dist/1000, Scaldis_HW90, color = "Outliers")) +
+  scale_color_manual(values = c("Outliers" = "red")) +
+  theme_minimal() + 
+  labs(
+      title = paste("HW90 Scaldis:", i),
+      x = "Afstand (km)", y = "Waterstand (m TAW)",
+      color = "")
+
+ggsave(
+    filename = file.path(output_fig, paste0("03_plot_Scaldis_", i, "_HW90_all_data.png")),
+    # filename = file.path(output_fig, paste0("03_plot_Scaldis_", i, "_HW90_outliers.png")),
+    width = 8, height = 5, dpi = 300, bg = "white")
+}
+
+```
+
+```{r}
+
+df_lw_hw_uitdunning_LW10 <- df_lw_hw_validation %>% 
+  filter(outlier_LW10 == FALSE, Dist >= 0) %>% 
+  mutate(LW10_250m = ifelse(row_number() %% 5 == 1, Scaldis_LW10, NA),
+         LW10_1000m = ifelse(row_number() %% 20 == 1, Scaldis_LW10, NA),
+         LW10_5000m = ifelse(row_number() %% 100 == 1, Scaldis_LW10, NA),
+         LW10_10000m = ifelse(row_number() %% 200 == 1, Scaldis_LW10, NA))
+
+df_lw_hw_uitdunning_HW90 <- df_lw_hw_validation %>% 
+filter(outlier_HW90 == FALSE, Dist >= 0) %>% 
+  mutate(HW90_250m = ifelse(row_number() %% 5 == 1, Scaldis_HW90, NA),
+         HW90_1000m = ifelse(row_number() %% 20 == 1, Scaldis_HW90, NA),
+         HW90_5000m = ifelse(row_number() %% 100 == 1, Scaldis_HW90, NA),
+         HW90_10000m = ifelse(row_number() %% 200 == 1, Scaldis_HW90, NA))
+
+for (i in c("Zeeschelde"))
+{
+ggplot() + 
+  geom_line(data=df_lw_hw_uitdunning_LW10 %>% filter(rivier == i), aes(Dist/1000, Scaldis_LW10, color = "50m")) +
+  geom_line(data=df_lw_hw_uitdunning_LW10 %>% filter(rivier == i, !is.na(LW10_1000m)), aes(Dist/1000, LW10_1000m, color = "1.000m")) +
+  geom_line(data=df_lw_hw_uitdunning_LW10 %>% filter(rivier == i, !is.na(LW10_5000m)), aes(Dist/1000, LW10_5000m, color = "5.000m")) +
+  geom_line(data=df_lw_hw_uitdunning_LW10 %>% filter(rivier == i, !is.na(LW10_10000m)), aes(Dist/1000, LW10_10000m, color = "10.000m")) +
+  theme_minimal() + 
+  scale_color_manual(values = c(
+    "50m" = "lightgrey", 
+    "1.000m" = "red3", 
+    "5.000m" = "darkgreen", 
+    "10.000m" = "blue"),
+    breaks = c("50m", 
+               "1.000m", 
+               "5.000m", 
+               "10.000m")) + 
+  labs(
+      title = paste("LW10 Scaldis:", i),
+      x = "Afstand (km)", y = "Waterstand (m TAW)",
+      color = "Intervals LW10")
+
+ggsave(
+    filename = file.path(output_fig, paste0("03_plot_Scaldis_", i, "_LW10_uitdunning_1_5_10km.png")), 
+    width = 8, height = 5, dpi = 300, bg = "white")
+
+
+ggplot() + 
+  geom_line(data=df_lw_hw_uitdunning_HW90 %>% filter(rivier == i), aes(Dist/1000, Scaldis_HW90, color = "50m")) +
+  geom_line(data=df_lw_hw_uitdunning_HW90 %>% filter(rivier == i, !is.na(HW90_1000m)), aes(Dist/1000, HW90_1000m, color = "1.000m")) +
+  geom_line(data=df_lw_hw_uitdunning_HW90 %>% filter(rivier == i, !is.na(HW90_5000m)), aes(Dist/1000, HW90_5000m, color = "5.000m")) +
+  geom_line(data=df_lw_hw_uitdunning_HW90 %>% filter(rivier == i, !is.na(HW90_10000m)), aes(Dist/1000, HW90_10000m, color = "10.000m")) +
+  theme_minimal() + 
+  scale_color_manual(values = c(
+    "50m" = "lightgrey", 
+    "1.000m" = "red3", 
+    "5.000m" = "darkgreen", 
+    "10.000m" = "blue"),
+    breaks = c("50m", 
+               "1.000m", 
+               "5.000m", 
+               "10.000m")) + 
+  labs(
+      title = paste("HW90 Scaldis:", i),
+      x = "Afstand (km)", y = "Waterstand (m TAW)",
+      color = "Intervals HW90")
+
+ggsave(
+    filename = file.path(output_fig, paste0("03_plot_Scaldis_", i, "_HW90_uitdunning_1_5_10km.png")), 
+    width = 8, height = 5, dpi = 300, bg = "white")
+}
+
+for (i in c("Rupel", "Durme", "Nete", "Kleine_Nete", "Dijle", "Zenne"))
+{
+ggplot() + 
+  geom_line(data=df_lw_hw_uitdunning_LW10 %>% filter(rivier == i), aes(Dist/1000, Scaldis_LW10, color = "50m")) +
+  geom_line(data=df_lw_hw_uitdunning_LW10 %>% filter(rivier == i, !is.na(LW10_250m)), aes(Dist/1000, LW10_250m, color = "250m")) +
+  geom_line(data=df_lw_hw_uitdunning_LW10 %>% filter(rivier == i, !is.na(LW10_1000m)), aes(Dist/1000, LW10_1000m, color = "1.000m")) +
+  geom_line(data=df_lw_hw_uitdunning_LW10 %>% filter(rivier == i, !is.na(LW10_5000m)), aes(Dist/1000, LW10_5000m, color = "5.000m")) +
+  theme_minimal() + 
+  scale_color_manual(values = c(
+    "50m" = "lightgrey", 
+    "250m" = "red3", 
+    "1.000m" = "darkgreen",
+    "5.000m" = "blue"),
+    breaks = c("50m", 
+               "250m", 
+               "1.000m", 
+               "5.000m")) + 
+  labs(
+      title = paste("LW10 Scaldis:", i),
+      x = "Afstand (km)", y = "Waterstand (m TAW)",
+      color = "Intervals LW10")
+
+ggsave(
+    filename = file.path(output_fig, paste0("03_plot_Scaldis_", i, "_LW10_uitdunning_0.4_1_5km.png")), 
+    width = 8, height = 5, dpi = 300, bg = "white")
+
+
+ggplot() + 
+  geom_line(data=df_lw_hw_uitdunning_HW90 %>% filter(rivier == i), aes(Dist/1000, Scaldis_HW90, color = "50m")) +
+  geom_line(data=df_lw_hw_uitdunning_HW90 %>% filter(rivier == i, !is.na(HW90_250m)), aes(Dist/1000, HW90_250m, color = "250m")) +
+  geom_line(data=df_lw_hw_uitdunning_HW90 %>% filter(rivier == i, !is.na(HW90_1000m)), aes(Dist/1000, HW90_1000m, color = "1.000m")) +
+  geom_line(data=df_lw_hw_uitdunning_HW90 %>% filter(rivier == i, !is.na(HW90_5000m)), aes(Dist/1000, HW90_5000m, color = "5.000m")) +
+  theme_minimal() + 
+  scale_color_manual(values = c(
+    "50m" = "lightgrey", 
+    "250m" = "red3", 
+    "1.000m" = "darkgreen",
+    "5.000m" = "blue"),
+    breaks = c("50m", 
+               "250m", 
+               "1.000m", 
+               "5.000m")) + 
+  labs(
+      title = paste("HW90 Scaldis:", i),
+      x = "Afstand (km)", y = "Waterstand (m TAW)",
+      color = "Intervals HW90")
+
+ggsave(
+    filename = file.path(output_fig, paste0("03_plot_Scaldis_", i, "_HW90_uitdunning_0.4_1_5km.png")), 
+    width = 8, height = 5, dpi = 300, bg = "white")
+}
+
+```

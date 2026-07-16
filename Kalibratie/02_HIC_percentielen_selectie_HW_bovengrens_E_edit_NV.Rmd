@@ -1,0 +1,406 @@
+---
+title: "02_HIC_percentielen_HW_bovengrens_E"
+author: "Robbie, edited by Nicolas"
+date: "2026-04-29"
+output: html_document
+---
+
+
+
+```{r Setup, include=FALSE}
+library(tidyverse)
+library(sf)
+library(readxl)
+library(purrr)
+
+# --- Paden Definitie ---
+path_data_hw          <- "../../../../Aangeleverd/20260410_WL_DD_LW_HW/Statistics HW LW 4QNplusQE.xlsx"
+path_percentielen  <- "../../../../../Ecotoop/Getij/verwerking/FrequentieHW&LW/outputHWLW/percentielen_HWLW_alle_2017_2020.csv"
+path_percentielen_zijrivieren <- "../../Output/Kalibratie/zijrivieren_data/percentielen_hwlw_zijrivieren_extra.csv"
+
+path_tijposten_csv    <- "../../Data/Kalibratie/input/tijposten.csv"
+path_tijposten_csv2   <- "../../Data/Kalibratie/input/extra_tijposten_Waterinfo.csv"
+path_salzone_shp      <- "../../../../../GIS_Zeeschelde/Referentiedata/gebiedsindelingen/ScheldevalleiSalZone_KRW_OMES_2022.shp"
+path_alloc_gdb        <- "../../../../../Ecotoop/Fysiotoop/BASIS_Ecotopen_GETIJ_ETRS.gdb"
+
+output_dir <- "../../Output/Kalibratie/"
+output_fig <- "../../Output/Kalibratie/figuren_HW05/"
+
+```
+
+
+
+```{r inladen modeldata}
+data_long_hw <- read_excel(path_data_hw, sheet = 2) %>%
+  rename(HW_raw = 1) %>%
+  mutate(across(everything(), ~ str_remove(str_remove(str_trim(.), "^HW "), " %$"))) %>%
+  mutate(across(everything(), as.numeric)) %>%
+  filter(HW_raw %in% c(0.5, 1, 2, 2.5, 3)) %>%
+  pivot_longer(cols = -c(HW_raw), names_to = "AllocNR", values_to = "waterstand_WL") %>%
+  mutate(AllocNR = as.character(as.integer(str_remove(AllocNR, "INBOpt_"))))
+
+
+```
+
+
+
+```{r inladen tijpostdata}
+
+tijpost_raw <- rbind(
+  read.csv(path_tijposten_csv),
+  read.csv2(path_tijposten_csv2)
+) %>%
+  mutate(tijpost = if_else(tijpost == "Wintam Sluis", "Wintam Sluis Afwaarts", tijpost))
+
+sf_zones <- st_read(path_salzone_shp, quiet = TRUE)
+sf_alloc <- st_read(dsn = path_alloc_gdb, layer = "AllocatieAspntScheldeRupelbekkenETRS", quiet = TRUE) %>% 
+  select(AllocNR, Dist)
+
+sf_data_clean <- st_as_sf(tijpost_raw, coords = c("x_lambert72", "y_lambert72"), crs = 31370) %>%
+  st_transform(st_crs(sf_zones)) %>%
+  st_join(sf_zones %>% select(SalZone)) %>%
+  st_transform(st_crs(sf_alloc)) %>%
+  st_join(sf_alloc) %>%
+  st_drop_geometry() %>%
+  mutate(
+    SalZone = case_match(SalZone, 
+                         c("Mesohalien", "Zone met sterke saliniteitsgradiënt") ~ "brak", 
+                         .default = "zoet"),
+    AllocNR = as.character(as.integer(AllocNR))
+  ) %>%
+  distinct(tijpost, .keep_all = TRUE)
+
+
+```
+
+```{r inladen HIC data}
+df_hic_raw <- read.csv(path_percentielen, sep=";") %>%
+  filter(fase == "HW")
+
+zijrivieren <- read.csv2(path_percentielen_zijrivieren, sep= ";") %>%
+  filter(fase == "HW")  
+
+df_hic_raw <-rbind (df_hic_raw, zijrivieren)
+
+rivier_groepen <- list(
+  "Zeeschelde" = "Zeeschelde",
+  "Durme"      = c("Durme", "Durmemonding"),
+  "Rupel & Nete" = c("Nete", "Rupel", "Rupelmonding"),
+  "Zenne"      = c("Zenne", "Rupel"),
+  "Dijle"      = c("Dijle", "Rupel"))
+
+
+```
+
+
+```{r inladen HIC data}
+
+df_hic_jaar_target <- df_hic_raw %>%
+  group_by(tijpost, jaar, percentiel) %>%
+  summarize(waterstand_HIC_gem = mean(waterstand, na.rm = TRUE), .groups = "drop") %>%
+  mutate(HW_join = 100 - round(percentiel, 1)) %>%
+  filter(near(HW_join, 0.6))
+
+
+df_hw_validation_jaar <- sf_data_clean %>%
+  left_join(
+    df_hic_jaar_target %>% 
+      select(tijpost, jaar, waterstand_HIC_target = waterstand_HIC_gem), 
+    by = "tijpost" 
+  ) %>%
+  left_join(data_long_hw, by = "AllocNR", relationship = "many-to-many") %>%
+  filter(!tijpost %in% c("Wetteren", "Zwijnaarde Afwaarts", "Zwijnaarde"))%>% 
+  filter(!is.na(waterstand_HIC_target))
+
+df_hw_validation_jaar <- df_hw_validation_jaar %>% 
+  rbind(., df_hw_validation_jaar %>% filter(tijpost == "Hemiksem") %>% mutate(rivier = "Rupel", Dist = -2600)) %>% 
+  rbind(., df_hw_validation_jaar %>% filter(tijpost == "Temse") %>% mutate(rivier = "Durme", Dist = -3650)) %>% 
+  arrange(Dist)
+
+# 2. Samenvatten over de jaren (Gelijk aan DD-logica)
+df_hic_summarized <- df_hic_raw %>%
+  group_by(tijpost, rivier, fase, percentiel) %>%
+  summarise(
+    waterstand_HIC_gem = mean(waterstand, na.rm = TRUE),
+    n_jaren = n(),
+    .groups = "drop") %>%
+  mutate(HW_join = (100 - round(percentiel, 1)))
+
+
+df_hic_target_gem <- df_hic_summarized %>%
+  filter(near(HW_join, 0.6)) %>% 
+  select(tijpost, waterstand_HIC_target = waterstand_HIC_gem)
+
+# 3. Finale validatie dataset (Gemiddelde over 2017-2020)
+df_hw_validation <- sf_data_clean %>%
+  left_join(
+    df_hic_target_gem, # Gebruik de reeds gefilterde subset
+    by = "tijpost") %>%
+  # Koppel de modeldata (WL)
+  left_join(data_long_hw, by = "AllocNR", relationship = "many-to-many") %>%
+  # Filter stations die we niet willen zien
+  filter(!tijpost %in% c("Wetteren", "Zwijnaarde Afwaarts", "Zwijnaarde"))%>% 
+  filter(!is.na(waterstand_HIC_target))
+
+df_hw_validation <- df_hw_validation %>% 
+  rbind(., df_hw_validation %>% filter(tijpost == "Hemiksem") %>% mutate(rivier = "Rupelmonding", Dist = -2600)) %>% 
+  rbind(., df_hw_validation %>% filter(tijpost == "Temse") %>% mutate(rivier = "Durmemonding", Dist = -3650)) %>% 
+  arrange(Dist)
+```
+
+
+
+```{r plot meerdere percentielen}
+mijn_hw_plots <- list()
+
+
+for (naam in names(rivier_groepen)) {
+  df_plot <- df_hw_validation %>%
+    filter(rivier %in% rivier_groepen[[naam]]) %>%
+    filter(!is.na(waterstand_HIC_target)) %>% 
+    filter(!is.na(Dist)) %>%
+    mutate(
+      # Bereken de gecumuleerde afstand
+      Dist_adj = case_when(
+        rivier == "Dijle" ~ Dist + 11850,
+        rivier == "Nete"  ~ Dist + 11850,
+        rivier == "Zenne" ~ Dist + 11850 + 1250,
+        TRUE              ~ Dist 
+      ),
+      HW_raw_fct = as.factor(HW_raw),
+      tijpost = fct_reorder(tijpost, Dist_adj)
+    )
+  
+  if (nrow(df_plot) == 0) next
+
+  stations_as <- df_plot %>% 
+    distinct(tijpost, Dist_adj) %>%  
+    arrange(Dist_adj)              
+
+  # Gebruik Dist_adj / 1000 in de x-esthetiek
+  p <- ggplot(df_plot, aes(x = Dist_adj / 1000)) + 
+    geom_line(aes(y = waterstand_WL, color = HW_raw_fct, group = HW_raw_fct), 
+              linetype = "dotted", linewidth = 0.6) +
+    geom_point(aes(y = waterstand_WL, color = HW_raw_fct), 
+               size = 3, alpha = 0.8) +
+    geom_line(aes(y = waterstand_HIC_target), 
+              color = "black", linewidth = 0.5, alpha = 0.7) +
+    geom_point(aes(y = waterstand_HIC_target), 
+               color = "red", size = 2, shape = 18) +
+    
+    # Gebruik Dist_adj voor de breaks
+    scale_x_continuous(breaks = stations_as$Dist_adj / 1000, labels = stations_as$tijpost) +
+    scale_y_continuous(limits = c(5, 8)) +
+    scale_color_viridis_d(name = "Scaldis HW (%)", option = "D", direction = -1, end = 0.8) + 
+    
+    theme_minimal() +
+    labs(
+      title = paste("Kalibratie HW:", naam),
+      subtitle = "Blauwgroene punten = Scaldis-model, Rode punten = HIC-meting (HW0.6)",
+      x = "Meetstation", y = "Waterstand (m TAW)") +
+    theme(
+      axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, size = 8),
+      legend.position = "right")
+
+  if (grepl("Zeeschelde", naam)) p <- p + geom_vline(xintercept = 29, linetype = "dashed", alpha = 0.2)
+
+  print(p)
+  mijn_hw_plots[[naam]] <- p
+}
+
+```
+
+
+```{r plot gefacetteerd per jaar}
+mijn_hw_plots_gecombineerd <- list()
+
+for (naam in names(rivier_groepen)) {
+  
+  # 1. Filter de data voor de RIVIER (we behouden alle jaren!)
+  df_plot <- df_hw_validation_jaar %>%
+    filter(rivier %in% rivier_groepen[[naam]]) %>%
+    filter(!is.na(waterstand_HIC_target)) %>% 
+    filter(!is.na(Dist)) %>%
+    filter(!is.na(Dist)) %>%
+    mutate(
+      # Bereken de gecumuleerde afstand (Rupel = 11.85 km, Zenne offset = 1.25 km)
+      Dist_adj = case_when(
+        rivier == "Dijle" ~ Dist + 11850,
+        rivier == "Nete"  ~ Dist + 11850,
+        rivier == "Zenne" ~ Dist + 11850 + 1250,
+        TRUE              ~ Dist # Rupel en Zeeschelde blijven ongewijzigd
+      ),
+      HW_raw_fct = as.factor(HW_raw),
+      # Reorder op basis van de aangepaste afstand
+      tijpost = fct_reorder(tijpost, Dist_adj)
+    )
+  
+  if (nrow(df_plot) == 0) next
+
+  # Stations as bepalen (uniek over de jaren heen voor deze rivier)
+  stations_as <- df_plot %>% distinct(tijpost, Dist_adj) %>% arrange(Dist_adj)
+
+  # 2. De Plot
+  p <- ggplot(df_plot, aes(x = Dist_adj / 1000)) +
+    
+    # --- 1. MODEL DATA ---
+    geom_line(aes(y = waterstand_WL, color = HW_raw_fct, group = HW_raw_fct), 
+              linetype = "dotted", linewidth = 0.6) +
+    geom_point(aes(y = waterstand_WL, color = HW_raw_fct), 
+               size = 1.5, alpha = 0.6) +
+    
+    # --- 2. METING DATA ---
+    # We filteren binnen de geom op HW_raw 0.6 en unieke locaties PER JAAR
+    geom_line(data = df_plot %>% group_by(jaar) %>% distinct(tijpost, .keep_all = TRUE), 
+              aes(y = waterstand_HIC_target), 
+              color = "black", linewidth = 0.5, alpha = 0.7) +
+    
+    geom_point(data = df_plot %>% group_by(jaar) %>% distinct(tijpost, .keep_all = TRUE), 
+               aes(y = waterstand_HIC_target), 
+               color = "red", size = 1.5, shape = 18) +
+    
+    # --- 3. FACETING: Hier komen de 4 jaren op 1 rij/grid ---
+    facet_wrap(~jaar, ncol = 2) + 
+    
+    # Opmaak
+    scale_x_continuous(breaks = stations_as$Dist_adj / 1000, labels = stations_as$tijpost) +
+    scale_y_continuous(limits = c(6, 8)) +
+    scale_color_viridis_d(name = "Scaldis HW (%)", option = "D", direction = -1, end = 0.8) + 
+    
+    theme_minimal() +
+    labs(
+      title = paste("Kalibratie HW per jaar:", naam),
+      subtitle = "Blauwgroene punten = Scaldis-model, Rode punten = HIC-meting (HW0.6)",
+      x = "Meetstation", 
+      y = "Waterstand (m TAW)") +
+    theme(
+      axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, size = 8),
+      legend.position = "bottom",
+      panel.spacing = unit(1, "lines"),
+      strip.background = element_rect(fill = "gray95", color = NA),
+      strip.text = element_text(face = "bold"))
+
+  if (grepl("Zeeschelde", naam)) {
+    p <- p + geom_vline(xintercept = 29, linetype = "dashed", color = "black", alpha = 0.2)
+  }
+
+  print(p)
+  mijn_hw_plots_gecombineerd[[naam]] <- p
+}
+```
+
+
+```{r plot selectie modelwaarde}
+
+# Maak een lege lijst om de plots op te slaan
+mijn_hw_plots_bovengrens <- list()
+
+# Loop door de riviergroepen
+for (naam in names(rivier_groepen)) {
+
+  # Filter de data voor HW 0.5 en HW 2.5 (Bovengrens scenario's)
+  df_plot <- df_hw_validation %>%
+    filter(rivier %in% rivier_groepen[[naam]]) %>%
+    filter(HW_raw %in% c(0.5, 2)) %>%  
+    filter(!is.na(waterstand_HIC_target)) %>% 
+    filter(!is.na(Dist)) %>% 
+    filter(!is.na(Dist)) %>%
+    mutate(
+      # Bereken de gecumuleerde afstand (Rupel = 11.85 km, Zenne offset = 1.25 km)
+      Dist_adj = case_when(
+        rivier == "Dijle" ~ Dist + 11850,
+        rivier == "Nete"  ~ Dist + 11850,
+        rivier == "Zenne" ~ Dist + 11850 + 1250,
+        TRUE              ~ Dist # Rupel en Zeeschelde blijven ongewijzigd
+      ),
+      HW_raw_fct = as.factor(HW_raw),
+      # Reorder op basis van de aangepaste afstand
+      tijpost = fct_reorder(tijpost, Dist_adj)
+    ) 
+  
+  # Controleer of er data is om te plotten
+  if (nrow(df_plot) == 0) next 
+
+  # Bepaal de unieke stations en hun afstanden
+  stations_as <- df_plot %>% distinct(tijpost, Dist_adj) %>% arrange(Dist_adj)
+
+  # Maak de plot
+  p <- ggplot(df_plot, aes(x = Dist_adj / 1000)) +
+    # 1. MODEL: Gestippelde verbindingslijn per HW-categorie (0.5 en 2.5)
+    geom_line(aes(y = waterstand_WL, color = HW_raw_fct, group = HW_raw_fct), 
+              linetype = "dotted", linewidth = 0.8) +
+    
+    # 1b. MODEL: Punten
+    geom_point(aes(y = waterstand_WL, color = HW_raw_fct), 
+               size = 3, alpha = 0.8) +
+    
+    # 2. METING: Zwarte verbindingslijn (HIC 0.6 Gemiddelde)
+    geom_line(data = df_plot %>% group_by(tijpost) %>% slice(1),
+              aes(y = waterstand_HIC_target), 
+              color = "black", linewidth = 0.5, alpha = 0.7) +
+    
+    # 3. METING: Rode ruiten
+    geom_point(data = df_plot %>% group_by(tijpost) %>% slice(1),
+               aes(y = waterstand_HIC_target), 
+               color = "red", size = 2, shape = 18) +
+    
+    # Opmaak
+    scale_x_continuous(breaks = stations_as$Dist / 1000, labels = stations_as$tijpost) +
+    scale_y_continuous(limits = c(6, 8)) +
+    # Handmatige kleuren voor de bovengrens scenario's
+    scale_color_manual(name = "Scaldis HW (%)", values = c("0.5" = "#053061", "2" = "#4393C3")) +
+    
+    theme_minimal() +
+    labs(
+      title = paste0("Kalibratie HW (buitengrens estuarium): ", naam),
+      subtitle = "Blauwe punten = Scaldis-model, Rode punten = HIC-meting (HW0.6)",
+      x = "Meetstation", 
+      y = "Waterstand (m TAW)"
+    ) +
+    theme(
+      axis.text.x = element_text(angle = 45, vjust = 1, hjust = 1, size = 8),
+      legend.position = "right",
+      panel.grid.major.x = element_line(color = "gray90", linewidth = 0.2)
+    )
+
+  # Voeg de plot toe aan de lijst
+  mijn_hw_plots_bovengrens[[naam]] <- p
+
+  # Toon de plot
+  print(p)
+}
+
+```
+
+
+```{r}
+write.csv2(df_hw_validation, paste0(output_dir, "01_HW_output_HIC_Scaldis_vergelijking_buitengrens_E.csv"), row.names = FALSE)
+
+iwalk(mijn_hw_plots, ~ ggsave(file.path(output_fig, paste0("Kalibratie_HW_buitengr_gem_", .y, ".png")), .x, width = 8, height = 5))
+iwalk(mijn_hw_plots_gecombineerd, ~ ggsave(file.path(output_fig, paste0("Kalibratie_HW_buitengr_per_jaar_", .y, ".png")), .x, width = 8, height = 5))
+iwalk(mijn_hw_plots_bovengrens, ~ ggsave(file.path(output_fig, paste0("Kalibratie_HW_buitengr_ltd_", .y, ".png")), .x, width = 8, height = 5))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
