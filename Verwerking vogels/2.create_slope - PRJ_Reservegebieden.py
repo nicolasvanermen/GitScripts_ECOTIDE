@@ -20,12 +20,10 @@
 # -----------------------
 
 # Import modules
+import os
 import arcpy
 from arcpy import env
-from arcpy.sa import *
-
-# Import os
-# import os
+from arcpy.sa import Raster, Slope
 
 # Check out Spatial Analyst extension
 if arcpy.CheckExtension("Spatial") == "Available":
@@ -52,16 +50,21 @@ alternative_scenario = alternative + "_" + scenario
 # ----------------------------------------------------------
 print("... Set working directory and environment settings")
 
-# Set file directory
-project_path = "Q:\\Projects\\PRJ_Schelde\\ECOTIDE\\Vogels\\PRJ_Reservegebieden"
+# Set in- and output gdb directory
+input_dir = r"Q:\Projects\PRJ_Schelde\ECOTIDE\Vogels\PRJ_Reservegebieden\Data\Combigrids"
+output_dir = r"Q:\Projects\PRJ_Schelde\ECOTIDE\Vogels\PRJ_Reservegebieden\Output"
 
 # Specify geodatabase to store slope result
 slope_gdb_name = "input_slope_" + alternative_scenario + ".gdb"
-slope_gdb = project_path + "\\Output\\" + slope_gdb_name
+slope_gdb = os.path.join(output_dir, slope_gdb_name)
 if not arcpy.Exists(slope_gdb):
-    arcpy.CreateFileGDB_management(project_path + "\\Output\\", slope_gdb_name)
+    arcpy.CreateFileGDB_management(output_dir, slope_gdb_name)
+
+# Set output raster directory
+slope_raster_path = os.path.join(slope_gdb, "Vogelmodel_slope_" + alternative_scenario)
 
 # Set environment settings
+env.workspace = slope_gdb
 env.overwriteOutput = True
 env.addOutputsToMap = False
 
@@ -71,9 +74,9 @@ env.addOutputsToMap = False
 # --------------------
 print("... Inputs")
 
-dtm_gdb = "Q:\\Projects\\PRJ_Schelde\\Ecotide\\Habitats\\PRJ_Reservegebieden\\Data\\Combigrids\\Combigrids.gdb"
-dtm_name = "Combigrid_16B_mTAW_REF_2020"
-dtm = Raster(dtm_gdb + "\\" + dtm_name)
+dtm_gdb = os.path.join(input_dir, "Combigrids.gdb")
+dtm_path = os.path.join(dtm_gdb, "Combigrid_16B_mTAW_" + alternative)
+dtm = Raster(dtm_path)
 
 
 # -------------------
@@ -88,6 +91,6 @@ outSlope_BOZ = Slope(dtm, "PERCENT_RISE", 1)
 # ----------------
 print("... Saving")
 
-outSlope_BOZ.save(slope_gdb + "\\Vogelmodel_slope_" + alternative_scenario)
+outSlope_BOZ.save(slope_raster_path)
 
 print("... Output saved!")
