@@ -1,0 +1,367 @@
+---
+title: "Interpolatie DD als input voor de Wintertaling-module"
+author: "Nicolas"
+date: "2026-07-24"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(sf)
+library(readxl)
+library(writexl)
+library(ggplot2)
+library(plotly)
+library(diffobj)
+library(foreign)
+```
+
+```{r inladen en linken aspunten & allocatiegrid + controles, include = FALSE}
+
+# controleer aspunten & allocatiegrid:
+pad_punten      <- "Q:/Projects/PRJ_Schelde/Ecotide/Basis/data/Referentiepunten/Aspunten.gdb"
+aspunten <- st_read(dsn = pad_punten, layer = "Aspunten_referentielaag_ECOTIDE") 
+
+pad_grid        <- "Q:/Projects/PRJ_Schelde/Ecotide/Basis/data/Allocatiegrid/Allocatiegrid.gdb"
+allocatiegrid <- st_read(dsn = pad_grid, layer = "AllocatieAspntScheldeRupelbekkenETRS_ECOTIDE")
+
+st_crs(aspunten)
+st_crs(allocatiegrid)
+allocatiegrid <- st_transform(allocatiegrid, crs = 31370)
+allocatiegrid_db <- allocatiegrid %>% st_drop_geometry()
+
+aspunten_vs_grid <- st_join(aspunten, allocatiegrid, join = st_intersects)
+aspunten_vs_grid_db <- aspunten_vs_grid %>% st_drop_geometry()
+
+summary(aspunten_vs_grid_db)
+# view(aspunten_vs_grid_db %>% filter(is.na(AllocNR)))
+# mondingspunt ligt net buiten allocatiegrid
+
+test1a <- allocatiegrid_db %>% 
+  count(SegmentID, Segment_name) 
+test1b <- allocatiegrid_db %>% 
+  count(SegmentID, Segment_name) %>% 
+  count(SegmentID)
+# Match SegmentID & naam OK
+
+test2 <- aspunten_vs_grid_db %>% 
+  filter(Segment != Segment_name)
+# Dit zijn alle punten op een vertakking (afstand_vertakking = 0) die in het allocatiegrid toegewezen zijn aan de stroomopwaartse sectie
+# (niet zo voor Dijle en Grote Nete alwaar de afstand tot de vertakking doorloopt, en er geen mondingspunt werd toegekend)
+
+test3 <- aspunten_vs_grid_db %>% 
+  filter(round(Dist_new, digits = 2) != round(Afstand_vertakking, digits = 2))
+# 8 mismatches thv mondingspunten - idem als test2
+# 3 mismatches stroomopwaarts op de Dijle (resp. 100, 200 & 300m); 
+# Dit is een gevolg van het gewijzigde traject! Aanpassing nodig? (fout lijkt mij naar interpolatie toe verwaarloosbaar)
+# 1 mismatch op Beneden Nete (50m) 
+# Dit is een gevolg van het gewijzigde traject! Aanpassing nodig? (fout lijkt mij naar interpolatie toe verwaarloosbaar)
+
+test4 <- aspunten %>% st_drop_geometry() %>% 
+  mutate(monding = round(Dist_Vlis - Afstand_vertakking, digits = 2)) %>% 
+  group_by(Segment, monding) %>% 
+  summarise(n = n()) %>% 
+  ungroup() 
+
+monding <- test4 %>% 
+  mutate(monding_up = case_when(Segment == "Grote Nete" ~ monding + 15.6,
+                                Segment == "Dijle" ~ monding + 1.25, .default = monding)) %>% 
+  arrange(monding) %>% 
+  select(-n)
+
+# rm(test1a, test1b, test2, test3)
+```
+
+```{r DD data inlezen en opkuisen}
+
+path_data_dd <- "Q:/Projects/PRJ_Schelde/Ecotide/Aangeleverd/20260410_WL_DD_LW_HW/Statistics (overspoeling) 4QNplusQE.xlsx"
+
+# Inlezen en opkuisen DD data
+data_dd <- read_excel(path_data_dd, sheet = 1) %>%
+  rename(OD = 1) %>%
+  mutate(across(everything(), ~ str_remove(str_remove(str_trim(.), "^WL"), "%$"))) %>%
+  rename_with(~ str_remove(., "INBOpt_"), everything()) %>%
+  mutate(across(everything(), as.numeric)) %>%
+  mutate(DD = (100 - OD)) %>%
+  pivot_longer(cols = -c(DD, OD), names_to = "AllocNR", values_to = "Value") %>% 
+  filter(DD %in% seq(from = 5,  to = 95, by = 5))
+
+```
+
+```{r join tussen dd data & aspunten_vs_grid_db}
+
+# Wrangle aspunten_vs_grid_db
+aspunten_vs_grid_db <- aspunten_vs_grid_db %>%
+  select(Segment, Dist_Vlis, Afstand_vertakking, AllocNR) %>%
+  mutate(AllocNR = as.character(AllocNR))
+
+# Er worden 2 extra punten toegekend om het eind van de trajecten van de Rupel en de ZS te markeren
+extra_aspunten <- aspunten_vs_grid_db %>% 
+  filter(Segment %in% c("Beneden Dijle", "trGM") & Afstand_vertakking ==0)
+  
+extra_aspunten$Segment <- c("Rupel", "Zeeschelde")
+extra_aspunten$Afstand_vertakking <- c(11.85, 165.30)
+
+aspunten_vs_grid_db <- aspunten_vs_grid_db %>% 
+  rbind(extra_aspunten) 
+
+
+# inner_join
+# many-to-many: ontdubbelde punten in 1 gridcel, en 19 DD-klassen per AllocNR
+# configuratie definiëren opdat interpolatie kan doorlopen langsheen de volledige Dijle & Nete
+resultaat_dd <- inner_join(data_dd, aspunten_vs_grid_db, by = "AllocNR", relationship = "many-to-many") %>% 
+  mutate(Configuratie = case_when(Segment %in% c("Beneden Dijle", "Dijle") ~ "Dijle",
+                                  Segment %in% c("Beneden Nete", "Grote Nete") ~ "Nete",
+                                  .default = Segment),
+         Conditie = paste0("DD_", DD),
+         Dist_Vlis = round(Dist_Vlis, digits = 2)) %>% 
+  relocate(Conditie, .before = Value) %>% 
+  select(-c(1,2)) 
+
+# opkuisen van enkele foute data
+resultaat_dd <- resultaat_dd %>%
+  filter(!(Configuratie == "Durme" & Dist_Vlis == 122),
+         !(Configuratie == "Nete" & Dist_Vlis == 148))
+
+```
+
+```{r interpolatie en toewijzen basispunten rivieren}
+# Definieer de segmenten, en handmatig toekennen van maximale afstanden waar nodig (begrenzing studiegebied igv Dijle, Durme & Kleine Nete)  
+# De start van de Zeeschelde wordt op de grens gelegd want geen DD data meer richting monding
+segments <- monding %>% 
+  select("Segment", start = "monding") %>%
+  mutate(
+    Configuratie = case_when(Segment %in% c("Beneden Dijle", "Dijle") ~ "Dijle",
+                             Segment %in% c("Beneden Nete", "Grote Nete") ~ "Nete",
+                             .default = Segment),
+    start = case_when(Configuratie == "Zeeschelde" ~ 65, .default = start),
+    end = case_when(Configuratie == "Dijle" ~ 122,
+                    Configuratie == "Durme" ~ 130,
+                    Configuratie == "Kleine Nete" ~ 143, .default = NA)) %>% 
+  relocate(start, .before = end) %>% 
+  select(-Segment) %>% 
+  distinct()
+
+# Koppel de start en end gegevens aan de DD-data
+dd_prepared <- resultaat_dd %>% 
+  inner_join(segments, by = "Configuratie") %>%
+  group_by(Configuratie) %>%
+  mutate(
+    start = coalesce(start, min(Dist_Vlis, na.rm = TRUE)),
+    end   = coalesce(end, max(Dist_Vlis, na.rm = TRUE))) %>%
+  ungroup()
+
+summary(dd_prepared)
+
+# view(dd_prepared %>% 
+#   group_by(Configuratie, start, end) %>%
+#   summarise(n = n()))
+
+# Interpolatie per Conditie en Configuratie
+dd_interpolated <- dd_prepared %>%
+  group_by(Conditie, Configuratie) %>%
+  filter(n() >= 2) %>% # Interpolatie heeft minstens 2 punten nodig
+  reframe({
+  # Bepaal het gewenste grid per segment
+  grid_x <- seq(unique(start), unique(end), by = 0.05)
+  # Lineaire interpolatie
+  res <- approx(x = Dist_Vlis, y = Value, xout = grid_x, rule = 1)
+
+  tibble(
+    Dist_Vlis = res$x,
+    Value     = res$y)
+  })
+
+summary(dd_interpolated)  
+# view(dd_interpolated %>% filter(is.na(Value)))
+# geen missing values meer
+```
+
+```{r data interpolatie samenzetten}
+
+#afstand vertakking toevoegen
+dd_interpolated <- dd_interpolated %>%
+  left_join(segments %>% select(-end)) %>% 
+  mutate(
+    Afstand_vertakking = case_when(Configuratie == "Zeeschelde" ~ Dist_Vlis, .default = Dist_Vlis - start),
+    # Afronden op 2 decimalen om floating point errors (zoals 1.42e-14) te verwijderen
+    across(c(Afstand_vertakking, Dist_Vlis, Value), \(x) round(x, digits = 2))) %>% 
+  select(-start)
+
+```
+
+```{r DD kruistabel maken}
+
+dd_kruistabel <- dd_interpolated %>% 
+  pivot_wider(names_from = Conditie, values_from = Value) %>% 
+  relocate(DD_5, .before = DD_10) 
+
+allocatie_rev <- allocatiegrid_db %>%
+  rename(Afstand_vertakking = Dist_new,
+         Segment = Segment_name) %>%
+  mutate(Configuratie = case_when(Segment %in% c("Beneden Dijle", "Dijle") ~ "Dijle",
+                                  Segment %in% c("Beneden Nete", "Grote Nete") ~ "Nete", .default = Segment),
+         Afstand_vertakking = round(Afstand_vertakking, digits = 2)) %>% 
+  select(Configuratie, Segment, Afstand_vertakking, AllocNR) 
+
+allocatie_rev <- allocatie_rev %>% distinct()
+
+dd_kruistabel <- dd_kruistabel %>% 
+  left_join(allocatie_rev) %>% 
+  relocate(AllocNR, .before = DD_5) %>% 
+  relocate(Segment, .before = Dist_Vlis) 
+
+# view(allocatie_rev %>% 
+#   count(Configuratie, Afstand_vertakking) %>% 
+#   filter(n > 1))
+
+view(dd_kruistabel %>% filter(is.na(AllocNR)))
+# n=8 - Segment mismatches thv mondingspunten - idem als test2
+# n=1 - Allocatiegrid van de Durme start maar bij 0.1 dus 0.5 valt uit de boot
+
+# waar komt die ene extra rij vandaan??
+# 3 enkele cellen binnen het allocatiegrid met toewijzing Dijle en afstand tot de vertakking van 1.25 -> aangepast & opgelost!
+```
+
+```{r functie figuren maken}
+plot_configuratie <- function(config_name, interpolated_data = dd_interpolated, raw_data = resultaat_dd, var_name = "Conditie") {
+  
+# config_name <- "Nete"  
+# raw_data <- resultaat_dd
+# interpolated_data <- dd_interpolated
+
+  # 1. Bepaal de segmenten op basis van de gekozen configuratie
+  segments_fig <- switch(config_name,
+    "Zeeschelde"                         = c("Zeeschelde"),
+    "Rupel"                              = c("Rupel"),
+    "Nete"                               = c("Beneden Nete", "Grote Nete"),
+    "Kleine Nete"                        = c("Kleine Nete"),
+    "Dijle"                              = c("Beneden Dijle", "Dijle"),
+    "Zenne"                              = c("Zenne"),
+    "Durme"                              = c("Durme"),
+    "Ringvaart+Zwijnaarde"               = c("Ringvaart+Zwijnaarde"),
+    "trGM"                               = c("trGM")
+  )
+  
+  # 2. Haal de Dist_Vlis op waar Afstand_vertakking == 0 voor de gebruikte segmenten
+  vline_vals <- raw_data %>%
+    filter(Segment %in% segments_fig & Afstand_vertakking == 0) %>%
+    pull(Dist_Vlis) %>%
+    unique()
+  
+  # Voeg extra vline toe voor specifieke configuraties
+  if (config_name == "Zeeschelde") {
+    vline_vals <- c(vline_vals, 65)
+  } else if (config_name == "Nete") {
+    vline_vals <- c(vline_vals, 132.25)
+  } else if (config_name == "Dijle") {
+    vline_vals <- c(vline_vals, 117.9)
+  } else if (config_name == "Ringvaart+Zwijnaarde") {
+    vline_vals <- c(vline_vals, 165.3)
+  }
+  
+  # 3. Filter de geïnterpoleerde data
+  df_plot <- interpolated_data %>% filter(Configuratie == config_name)
+  
+  # 4. Filter de originele ruwe data op basis van de segmenten
+  df_raw_plot <- raw_data %>% filter(Segment %in% segments_fig)
+  
+  # 5. Maak de ggplot grafiek
+  ggplot(df_plot, aes(x = Dist_Vlis, y = Value, color = factor(.data[[var_name]]))) +
+    geom_line(linewidth = 1) +
+    geom_point(size = 1.5) +
+    
+    # Toevoeging van de originele (niet geïnterpoleerde) waarden als zwarte ruit
+    geom_point(
+      data = df_raw_plot,
+      aes(x = Dist_Vlis, y = Value),
+      color = "black",
+      shape = 18,
+      size = 2.5,
+      inherit.aes = FALSE
+    ) +
+    
+    # Voeg verticale stippellijnen toe
+    geom_vline(
+      xintercept = vline_vals, 
+      linetype = "dashed", 
+      color = "black", 
+      linewidth = 0.8,
+      alpha = 0.7
+    ) +
+    labs(
+      title = paste(config_name),
+      x = "Dist_Vlis (km)",
+      y = "Waarde",
+      color = var_name
+    ) +
+    theme_minimal() +
+    theme(
+      plot.title = element_text(face = "bold", size = 12),
+      axis.title = element_text(size = 10),
+      legend.position = "right"
+    )
+}
+
+```
+
+
+```{r plotten}
+p0 <- plot_configuratie("Zeeschelde")
+p1 <- plot_configuratie("Rupel")
+p2 <- plot_configuratie("Nete")
+p3 <- plot_configuratie("Kleine Nete")
+p4 <- plot_configuratie("Dijle")
+p5 <- plot_configuratie("Zenne")
+p6 <- plot_configuratie("Durme")
+p7 <- plot_configuratie("Ringvaart+Zwijnaarde")
+p8 <- plot_configuratie("trGM")
+
+print(p0)
+print(p1)
+print(p2)
+print(p3)
+print(p4)
+print(p5)
+print(p6)
+print(p7)
+print(p8)
+```
+
+```{r wegschrijven}
+output_dir <- "Q:/Projects/PRJ_Schelde/Ecotide/Vogels/PRJ_Reservegebieden/Data/INPUT DD SLOPE/"
+# write_csv(dd_kruistabel, file.path(output_dir, "dd_interpolated.csv"))
+write_xlsx(dd_kruistabel, paste0(output_dir, "dd_interpolated_REF_2020_Scaldis.xlsx"))
+
+# 2. Koppel de configuratienamen aan de gemaakte ggplot-objecten
+plot_list <- list(
+"Zeeschelde"        = p0,
+"Rupel"             = p1,
+"Nete"              = p2,
+"Kleine Nete"       = p3,
+"Dijle"             = p4,
+"Zenne"             = p5,
+"Durme"             = p6,
+"Ringvaart+Zwijnaarde" = p7,
+"trGM"              = p8
+)
+
+# 3. Exporteer de figuren naar de output directory
+for (config_name in names(plot_list)) {
+
+plot_name <- config_name
+
+# file_name <- paste0("01_Interpolatie_", plot_name, "_2020_Ref.png")
+file_name <- paste0("01_Interpolatie_", plot_name, "_2020_Ref_B.png")
+  file_path <- file.path(paste0(output_dir, "/Figures"), file_name)
+  ggsave(
+    filename = file_path,
+    plot = plot_list[[config_name]],
+    width = 10,
+    height = 6,
+    dpi = 300)
+}
+```
+
+
+
