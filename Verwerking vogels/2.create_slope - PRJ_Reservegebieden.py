@@ -5,7 +5,7 @@
 # 
 # Created on 17/11/2020 by Amber Mertens; edited by Nicolas Vanermen
 # Last edited on: 31/07/2026
-# Last run: 31/07/2026 - 14:00
+# Last run: 31/07/2026 - 18:45
 # 
 # Version: Python 27
 #
@@ -51,7 +51,7 @@ alternative_scenario = alternative + "_" + scenario
 print("... Set working directory and environment settings")
 
 # Set in- and output gdb directory
-input_dir = r"Q:\Projects\PRJ_Schelde\ECOTIDE\Vogels\PRJ_Reservegebieden\Data\Combigrids"
+input_dir = r"Q:\Projects\PRJ_Schelde\ECOTIDE\Habitats\PRJ_Reservegebieden\Data\Combigrids"
 output_dir = r"Q:\Projects\PRJ_Schelde\ECOTIDE\Vogels\PRJ_Reservegebieden\Output"
 
 # Specify geodatabase to store slope result
