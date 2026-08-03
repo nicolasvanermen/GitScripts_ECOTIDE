@@ -1,7 +1,8 @@
 ---
 title: "Interpolatie DD als input voor de Wintertaling-module"
 author: "Nicolas"
-date: "2026-07-24"
+date: "2026-08-03"
+last run: "2026-08-03 12:03"
 output: html_document
 ---
 
@@ -119,9 +120,8 @@ resultaat_dd <- inner_join(data_dd, aspunten_vs_grid_db, by = "AllocNR", relatio
   select(-c(1,2)) 
 
 # opkuisen van enkele foute data
-resultaat_dd <- resultaat_dd %>%
-  filter(!(Configuratie == "Durme" & Dist_Vlis == 122),
-         !(Configuratie == "Nete" & Dist_Vlis == 148))
+# resultaat_dd <- resultaat_dd %>%
+#   filter(!(Configuratie == "Durme" & Dist_Vlis == 122))
 
 ```
 
@@ -136,8 +136,7 @@ segments <- monding %>%
                              .default = Segment),
     start = case_when(Configuratie == "Zeeschelde" ~ 65, .default = start),
     end = case_when(Configuratie == "Dijle" ~ 122,
-                    Configuratie == "Durme" ~ 130,
-                    Configuratie == "Kleine Nete" ~ 143, .default = NA)) %>% 
+                    Configuratie == "Nete" ~ 143, .default = NA)) %>% 
   relocate(start, .before = end) %>% 
   select(-Segment) %>% 
   distinct()
@@ -351,8 +350,8 @@ for (config_name in names(plot_list)) {
 
 plot_name <- config_name
 
-# file_name <- paste0("01_Interpolatie_", plot_name, "_2020_Ref.png")
-file_name <- paste0("01_Interpolatie_", plot_name, "_2020_Ref_B.png")
+file_name <- paste0("01_Interpolatie_", plot_name, "_2020_Ref.png")
+# file_name <- paste0("01_Interpolatie_", plot_name, "_2020_Ref_B.png")
   file_path <- file.path(paste0(output_dir, "/Figures"), file_name)
   ggsave(
     filename = file_path,
