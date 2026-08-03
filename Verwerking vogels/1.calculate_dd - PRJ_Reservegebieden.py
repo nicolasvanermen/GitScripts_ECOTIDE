@@ -5,7 +5,7 @@
 # 
 # Created on 25/01/2020 by Amber Mertens; edited by Nicolas Vanermen
 # Last edited on: 31/07/2026
-# Last run: 31/07/2026 - 15u00
+# Last run: 31/07/2026 - 20:00
 #
 # Version: Python 27
 #
@@ -22,7 +22,7 @@
 
 # Import arcpy module
 import arcpy
-from arcpy.sa import *
+from arcpy.sa import Raster, Con, Int
 from arcpy import env
 
 # Import numpy
@@ -59,25 +59,24 @@ alternative_scenario = alternative + "_" + scenario
 print("... Set working directory and environment settings")
 
 # Set data and input directories
-data_dir = "Q:\\Projects\\PRJ_Schelde\\Ecotide\\Vogels\\PRJ_Reservegebieden\\Data\\INPUT DD SLOPE\\"
-output_dir = "Q:\\Projects\\PRJ_Schelde\\Ecotide\\Vogels\\PRJ_Reservegebieden\\Output\\"
+data_dir = r"Q:\Projects\PRJ_Schelde\Ecotide\Vogels\PRJ_Reservegebieden\Data\INPUT DD SLOPE"
+output_dir = r"Q:\Projects\PRJ_Schelde\Ecotide\Vogels\PRJ_Reservegebieden\Output"
 
-alloc_dir = "Q:\\Projects\\PRJ_Schelde\\Ecotide\\Basis\\Data\\Allocatiegrid\\"
+alloc_dir = r"Q:\Projects\PRJ_Schelde\Ecotide\Basis\Data\Allocatiegrid"
 alloc_gdb = os.path.join(alloc_dir, "Allocatiegrid.gdb")
 
-dtm_dir = "Q:\\Projects\\PRJ_Schelde\\Ecotide\\Habitats\\PRJ_Reservegebieden\\Data\\Combigrids\\"
+dtm_dir = r"Q:\Projects\PRJ_Schelde\Ecotide\Habitats\PRJ_Reservegebieden\Data\Combigrids"
 dtm_gdb = os.path.join(dtm_dir, "Combigrids.gdb")
 
 # Set output geodatabase
 gdb_name = "input_DD_" + alternative_scenario + ".gdb"
+output_gdb = os.path.join(output_dir, gdb_name)
 
-if not arcpy.Exists(output_dir + gdb_name):
-    geodatabase = arcpy.CreateFileGDB_management((output_dir), gdb_name).getOutput(0)
-else:
-    geodatabase = output_dir + gdb_name
+if not arcpy.Exists(output_gdb):
+    arcpy.CreateFileGDB_management(output_dir, gdb_name)
 
 # Set environment settings (scratch workspace should be the same as current workspace to avoid issues with map algebra)
-env.workspace = env.scratchWorkspace = geodatabase
+env.workspace = env.scratchWorkspace = output_gdb
 env.overwriteOutput = True
 env.addOutputsToMap = False
 env.parallelProcessingFactor = "25%"
@@ -93,13 +92,14 @@ feature_class = os.path.join(alloc_gdb, "AllocatieAspntScheldeRupelbekkenETRS_EC
 arcpy.MakeFeatureLayer_management(feature_class, "allocatie_lyr")
 
 # ---- DTM ----
-dtm_name = "Combigrid_16B_mTAW_REF_2020"
-dtm = Raster(dtm_gdb + "\\" + dtm_name)
+dtm_path = os.path.join(dtm_gdb, "Combigrid_16B_mTAW_" + alternative)
+dtm = Raster(dtm_path)
+env.cellSize = dtm
 
 # ---- Data table ----
 table_name = "dd_interpolated_" + alternative_scenario + ".xlsx"
 sheet_name = "Sheet1"
-excel_table = data_dir + table_name
+excel_table = os.path.join(data_dir, table_name)
 
 # -------------------
 # ----- PROCESS -----
@@ -107,7 +107,7 @@ excel_table = data_dir + table_name
 print("... Processing")
 
 # Convert .xls sheet to table
-out_table = geodatabase + "\\dd_interpolated_table"
+out_table = os.path.join(output_gdb, "dd_interpolated_table")
 arcpy.ExcelToTable_conversion(excel_table, out_table, sheet_name)
 
 # Join dd table
@@ -127,10 +127,12 @@ for p in percentages:
     dd_output_raster = "DD" + str(p) + "_minus_DTM" # output
     field_to_rasterize = "DD_" + str(p)
     table_name = (out_table.split("\\"))[-1]  # the table name is the last part of the path for the table_to_join
-    arcpy.PolygonToRaster_conversion("allocatie_lyr",
-                                     table_name + "." + field_to_rasterize,
-                                     dd_output_raster,
-                                     "CELL_CENTER", "NONE", "1")
+    arcpy.PolygonToRaster_conversion(in_features = "allocatie_lyr",
+                                     value_field = table_name + "." + field_to_rasterize,
+                                     out_rasterdataset = dd_output_raster,
+                                     cell_assignment = "CELL_CENTER", 
+                                     priority_field = "NONE", 
+                                     cellsize = dtm)
 
     # Subtract dtm
     dd_min = Raster(dd_output_raster) - dtm
@@ -143,7 +145,8 @@ for p in percentages:
         # If dd_min <= 0 -> p, else -> NoData
         Reclass_DD_raster = Int(Con(dd_min <= 0, p))
 
-    Reclass_DD_raster.save(geodatabase + "\\Reclass_DD" + str(p))
+    reclass_path = os.path.join(output_gdb, "Reclass_DD" + str(p))
+    Reclass_DD_raster.save(reclass_path)
     
     del dd_min
     del Reclass_DD_raster
@@ -157,7 +160,13 @@ print("... Executing MosaicToNewRaster")
 
 DD_Schelde = "Vogelmodel_DD_" + alternative_scenario  # output
 all_files = arcpy.ListRasters("Reclass*")
-arcpy.MosaicToNewRaster_management(all_files, env.workspace, DD_Schelde, "", "8_BIT_UNSIGNED", "1", "1", "MAXIMUM", "FIRST")
+arcpy.MosaicToNewRaster_management(input_rasters = all_files, 
+                                   output_location = env.workspace, 
+                                   raster_dataset_name_with_extension = DD_Schelde,
+                                   pixel_type = "8_BIT_UNSIGNED", 
+                                   number_of_bands = 1,
+                                   mosaic_method = "MAXIMUM",
+                                   mosaic_colormap_mode = "FIRST")
 
 print("... Output saved!")
 
@@ -166,7 +175,7 @@ print("... Output saved!")
 # ----------------------
 print("... Deleting redundant raster files")
 
-files_to_delete = arcpy.ListRasters("Reclass_*")
+files_to_delete = arcpy.ListRasters("Reclass*")
 
 for item in files_to_delete:
     arcpy.management.Delete(item)
