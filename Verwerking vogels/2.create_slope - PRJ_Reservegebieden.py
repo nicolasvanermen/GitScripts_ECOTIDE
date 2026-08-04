@@ -5,7 +5,7 @@
 # 
 # Created on 17/11/2020 by Amber Mertens; edited by Nicolas Vanermen
 # Last edited on: 31/07/2026
-# Last run: 31/07/2026 - 18:45
+# Last run: 03/08/2026 - 17:30
 # 
 # Version: Python 27
 #
@@ -36,7 +36,7 @@ else:
 # --------------------------------------
 # ----- Set alternative & scenario -----
 # --------------------------------------
-print("... Set alternative & scenario")
+print("Set alternative & scenario")
 
 alternative = "REF_2020"
 # scenario = "HIC"
@@ -48,7 +48,7 @@ alternative_scenario = alternative + "_" + scenario
 # ----------------------------------------------------------
 # ----- Set working directory and environment settings -----
 # ----------------------------------------------------------
-print("... Set working directory and environment settings")
+print("Set working directory and environment settings")
 
 # Set in- and output gdb directory
 input_dir = r"Q:\Projects\PRJ_Schelde\ECOTIDE\Habitats\PRJ_Reservegebieden\Data\Combigrids"
@@ -57,6 +57,7 @@ output_dir = r"Q:\Projects\PRJ_Schelde\ECOTIDE\Vogels\PRJ_Reservegebieden\Output
 # Specify geodatabase to store slope result
 slope_gdb_name = "input_slope_" + alternative_scenario + ".gdb"
 slope_gdb = os.path.join(output_dir, slope_gdb_name)
+
 if not arcpy.Exists(slope_gdb):
     arcpy.CreateFileGDB_management(output_dir, slope_gdb_name)
 
@@ -72,7 +73,7 @@ env.addOutputsToMap = False
 # --------------------
 # ------ INPUTS ------
 # --------------------
-print("... Inputs")
+print("Inputs")
 
 dtm_gdb = os.path.join(input_dir, "Combigrids.gdb")
 dtm_path = os.path.join(dtm_gdb, "Combigrid_16B_mTAW_" + alternative)
@@ -93,4 +94,4 @@ print("... Saving")
 
 outSlope_BOZ.save(slope_raster_path)
 
-print("... Output saved!")
+print("Output saved!")

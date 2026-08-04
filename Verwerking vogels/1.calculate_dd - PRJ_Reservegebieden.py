@@ -5,7 +5,7 @@
 # 
 # Created on 25/01/2020 by Amber Mertens; edited by Nicolas Vanermen
 # Last edited on: 31/07/2026
-# Last run: 31/07/2026 - 20:00
+# Last run: 03/08/2026 - 17:40
 #
 # Version: Python 27
 #
@@ -45,7 +45,7 @@ else:
 # --------------------------------------
 # ----- Set alternative & scenario -----
 # --------------------------------------
-print("... Set alternative & scenario")
+print("Set alternative & scenario")
 
 alternative = "REF_2020"
 # scenario = "HIC"
@@ -56,7 +56,7 @@ alternative_scenario = alternative + "_" + scenario
 # ----------------------------------------------------------
 # ----- Set working directory and environment settings -----
 # ----------------------------------------------------------
-print("... Set working directory and environment settings")
+print("Set working directory and environment settings")
 
 # Set data and input directories
 data_dir = r"Q:\Projects\PRJ_Schelde\Ecotide\Vogels\PRJ_Reservegebieden\Data\INPUT DD SLOPE"
@@ -84,7 +84,7 @@ env.parallelProcessingFactor = "25%"
 # --------------------
 # ------ INPUTS ------
 # --------------------
-print("... Inputs")
+print("Inputs")
 
 # ---- Allocatielayer ----
 # Make a temporary layer from the allocatielayer
@@ -168,14 +168,14 @@ arcpy.MosaicToNewRaster_management(input_rasters = all_files,
                                    mosaic_method = "MAXIMUM",
                                    mosaic_colormap_mode = "FIRST")
 
-print("... Output saved!")
+print("Output saved!")
 
 # ----------------------
 # ----- (optional) -----
 # ----------------------
-print("... Deleting redundant raster files")
-
 files_to_delete = arcpy.ListRasters("Reclass*")
 
 for item in files_to_delete:
     arcpy.management.Delete(item)
+
+print("Redundant raster files deleted")
