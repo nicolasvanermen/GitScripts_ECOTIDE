@@ -5,7 +5,7 @@
 #
 # Created on: 25/06/2018
 # Last edited on: 03/08/2026 by Nicolas Vanermen
-# Last run on: 04/08/2026 10:00
+# Last run on: 04/08/2026 12:25
 # 
 # Version: Python 27
 #
@@ -115,7 +115,6 @@ print("... Select mudflats & CRT")
 where_clause = "Habmap IS NOT NULL AND Habmap IN ('GGG habitat', 'laag slik', 'middelhoog slik', 'hoog slik')"
 arcpy.Select_analysis(habmap_kaart, zacht_intertidaal_en_GGG, where_clause)
 arcpy.Intersect_analysis([zacht_intertidaal_en_GGG, telgebieden_kaart], telgebieden_zacht_intertidaal_en_GGG_temp)
-arcpy.AlterField_management(telgebieden_zacht_intertidaal_en_GGG_temp, "ZoneCodeOe", "Telgebied", "Telgebied")
 
 
 # surface intertidaal
@@ -123,7 +122,7 @@ print("... Calculate surface area")
 arcpy.Dissolve_management(
         in_features = telgebieden_zacht_intertidaal_en_GGG_temp,
         out_feature_class = telgebieden_zacht_intertidaal_en_GGG,
-        dissolve_field = "Telgebied",
+        dissolve_field = "TelgebiedCode",
         multi_part = "MULTI_PART"
         )
 arcpy.TableToExcel_conversion(telgebieden_zacht_intertidaal_en_GGG, oppervlakte_intertidaal_xls)
@@ -131,7 +130,7 @@ arcpy.TableToExcel_conversion(telgebieden_zacht_intertidaal_en_GGG, oppervlakte_
 
 # slope intertidaal
 print("... Calculate slope")
-arcpy.sa.ZonalStatisticsAsTable(telgebieden_zacht_intertidaal_en_GGG, "Telgebied", slope_kaart, Vogelmodel_slope, "DATA", "MEAN")
+arcpy.sa.ZonalStatisticsAsTable(telgebieden_zacht_intertidaal_en_GGG, "TelgebiedCode", slope_kaart, Vogelmodel_slope, "DATA", "MEAN")
 arcpy.TableToExcel_conversion(Vogelmodel_slope, slope_intertidaal_xls)
 
 
@@ -141,7 +140,7 @@ arcpy.management.AddField(telgebieden_zacht_intertidaal_en_GGG, "ZoneID", "LONG"
 arcpy.management.CalculateField(telgebieden_zacht_intertidaal_en_GGG, "ZoneID", "!OBJECTID!", "PYTHON_9.3")
 
 arcpy.sa.TabulateArea(telgebieden_zacht_intertidaal_en_GGG, "ZoneID", DD_kaart, "Value", Vogelmodel_DD, 1)
-arcpy.JoinField_management(Vogelmodel_DD, "ZoneID", telgebieden_zacht_intertidaal_en_GGG, "ZoneID", ["Telgebied"])
+arcpy.JoinField_management(Vogelmodel_DD, "ZoneID", telgebieden_zacht_intertidaal_en_GGG, "ZoneID", ["TelgebiedCode"])
 arcpy.TableToExcel_conversion(Vogelmodel_DD, DD_intertidaal_xls)
 
 print("Ready to go!")
