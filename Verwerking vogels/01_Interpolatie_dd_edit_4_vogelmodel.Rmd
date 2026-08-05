@@ -1,7 +1,7 @@
 ---
 title: "Interpolatie DD als input voor de Wintertaling-module"
 author: "Nicolas"
-date: "2026-08-03"
+date: "2026-08-05"
 last run: "2026-08-03 12:03"
 output: html_document
 ---
@@ -24,34 +24,33 @@ pad_punten      <- "Q:/Projects/PRJ_Schelde/Ecotide/Basis/data/Referentiepunten/
 aspunten <- st_read(dsn = pad_punten, layer = "Aspunten_referentielaag_ECOTIDE") 
 
 pad_grid        <- "Q:/Projects/PRJ_Schelde/Ecotide/Basis/data/Allocatiegrid/Allocatiegrid.gdb"
-allocatiegrid <- st_read(dsn = pad_grid, layer = "AllocatieAspntScheldeRupelbekkenETRS_ECOTIDE")
+allocatiegrid <- st_read(dsn = pad_grid, layer = "AllocatieAspntScheldeRupelbekken_BL_ECOTIDE")
 
 st_crs(aspunten)
 st_crs(allocatiegrid)
-allocatiegrid <- st_transform(allocatiegrid, crs = 31370)
 allocatiegrid_db <- allocatiegrid %>% st_drop_geometry()
 
 aspunten_vs_grid <- st_join(aspunten, allocatiegrid, join = st_intersects)
 aspunten_vs_grid_db <- aspunten_vs_grid %>% st_drop_geometry()
-
 summary(aspunten_vs_grid_db)
+# 1 NA
 # view(aspunten_vs_grid_db %>% filter(is.na(AllocNR)))
 # mondingspunt ligt net buiten allocatiegrid
 
 test1a <- allocatiegrid_db %>% 
-  count(SegmentID, Segment_name) 
+  count(SegmentID, SegmentNaam) 
 test1b <- allocatiegrid_db %>% 
-  count(SegmentID, Segment_name) %>% 
+  count(SegmentID, SegmentNaam) %>% 
   count(SegmentID)
 # Match SegmentID & naam OK
 
 test2 <- aspunten_vs_grid_db %>% 
-  filter(Segment != Segment_name)
-# Dit zijn alle punten op een vertakking (afstand_vertakking = 0) die in het allocatiegrid toegewezen zijn aan de stroomopwaartse sectie
+  filter(SegmentNaam.x != SegmentNaam.y)
+# Dit zijn alle punten op een vertakking (AfstMonding = 0) die in het allocatiegrid toegewezen zijn aan de stroomopwaartse sectie
 # (niet zo voor Dijle en Grote Nete alwaar de afstand tot de vertakking doorloopt, en er geen mondingspunt werd toegekend)
 
 test3 <- aspunten_vs_grid_db %>% 
-  filter(round(Dist_new, digits = 2) != round(Afstand_vertakking, digits = 2))
+  filter(round(AfstMonding.x, digits = 2) != round(AfstMonding.y, digits = 2))
 # 8 mismatches thv mondingspunten - idem als test2
 # 3 mismatches stroomopwaarts op de Dijle (resp. 100, 200 & 300m); 
 # Dit is een gevolg van het gewijzigde traject! Aanpassing nodig? (fout lijkt mij naar interpolatie toe verwaarloosbaar)
@@ -59,14 +58,14 @@ test3 <- aspunten_vs_grid_db %>%
 # Dit is een gevolg van het gewijzigde traject! Aanpassing nodig? (fout lijkt mij naar interpolatie toe verwaarloosbaar)
 
 test4 <- aspunten %>% st_drop_geometry() %>% 
-  mutate(monding = round(Dist_Vlis - Afstand_vertakking, digits = 2)) %>% 
-  group_by(Segment, monding) %>% 
+  mutate(monding = round(AfstVlis - AfstMonding, digits = 2)) %>% 
+  group_by(SegmentNaam, monding) %>% 
   summarise(n = n()) %>% 
   ungroup() 
 
 monding <- test4 %>% 
-  mutate(monding_up = case_when(Segment == "Grote Nete" ~ monding + 15.6,
-                                Segment == "Dijle" ~ monding + 1.25, .default = monding)) %>% 
+  mutate(monding_up = case_when(SegmentNaam == "Grote Nete" ~ monding + 15.6,
+                                SegmentNaam == "Dijle" ~ monding + 1.25, .default = monding)) %>% 
   arrange(monding) %>% 
   select(-n)
 
@@ -93,35 +92,34 @@ data_dd <- read_excel(path_data_dd, sheet = 1) %>%
 
 # Wrangle aspunten_vs_grid_db
 aspunten_vs_grid_db <- aspunten_vs_grid_db %>%
-  select(Segment, Dist_Vlis, Afstand_vertakking, AllocNR) %>%
+  select("SegmentNaam" = SegmentNaam.x, AfstVlis, "AfstMonding" = AfstMonding.x, AllocNR) %>%
   mutate(AllocNR = as.character(AllocNR))
 
 # Er worden 2 extra punten toegekend om het eind van de trajecten van de Rupel en de ZS te markeren
 extra_aspunten <- aspunten_vs_grid_db %>% 
-  filter(Segment %in% c("Beneden Dijle", "trGM") & Afstand_vertakking ==0)
+  filter(SegmentNaam %in% c("Beneden Dijle", "trGM") & AfstMonding == 0)
   
-extra_aspunten$Segment <- c("Rupel", "Zeeschelde")
-extra_aspunten$Afstand_vertakking <- c(11.85, 165.30)
+extra_aspunten$SegmentNaam <- c("Rupel", "Zeeschelde")
+extra_aspunten$AfstMonding <- c(11.85, 165.30)
 
 aspunten_vs_grid_db <- aspunten_vs_grid_db %>% 
   rbind(extra_aspunten) 
-
 
 # inner_join
 # many-to-many: ontdubbelde punten in 1 gridcel, en 19 DD-klassen per AllocNR
 # configuratie definiëren opdat interpolatie kan doorlopen langsheen de volledige Dijle & Nete
 resultaat_dd <- inner_join(data_dd, aspunten_vs_grid_db, by = "AllocNR", relationship = "many-to-many") %>% 
-  mutate(Configuratie = case_when(Segment %in% c("Beneden Dijle", "Dijle") ~ "Dijle",
-                                  Segment %in% c("Beneden Nete", "Grote Nete") ~ "Nete",
-                                  .default = Segment),
+  mutate(Configuratie = case_when(SegmentNaam %in% c("Beneden Dijle", "Dijle") ~ "Dijle",
+                                  SegmentNaam %in% c("Beneden Nete", "Grote Nete") ~ "Nete",
+                                  .default = SegmentNaam),
          Conditie = paste0("DD_", DD),
-         Dist_Vlis = round(Dist_Vlis, digits = 2)) %>% 
+         AfstVlis = round(AfstVlis, digits = 2)) %>% 
   relocate(Conditie, .before = Value) %>% 
   select(-c(1,2)) 
 
-# opkuisen van enkele foute data
-# resultaat_dd <- resultaat_dd %>%
-#   filter(!(Configuratie == "Durme" & Dist_Vlis == 122))
+# opkuisen van fout datapunt
+resultaat_dd <- resultaat_dd %>%
+   filter(!(Configuratie == "Durme" & AfstVlis == 122))
 
 ```
 
@@ -129,16 +127,19 @@ resultaat_dd <- inner_join(data_dd, aspunten_vs_grid_db, by = "AllocNR", relatio
 # Definieer de segmenten, en handmatig toekennen van maximale afstanden waar nodig (begrenzing studiegebied igv Dijle, Durme & Kleine Nete)  
 # De start van de Zeeschelde wordt op de grens gelegd want geen DD data meer richting monding
 segments <- monding %>% 
-  select("Segment", start = "monding") %>%
+  filter(SegmentNaam != "Kleine Nete") %>% 
+  select(SegmentNaam, "start" = monding) %>%
   mutate(
-    Configuratie = case_when(Segment %in% c("Beneden Dijle", "Dijle") ~ "Dijle",
-                             Segment %in% c("Beneden Nete", "Grote Nete") ~ "Nete",
-                             .default = Segment),
+    Configuratie = case_when(SegmentNaam %in% c("Beneden Dijle", "Dijle") ~ "Dijle",
+                             SegmentNaam %in% c("Beneden Nete", "Grote Nete") ~ "Nete",
+                             .default = SegmentNaam),
     start = case_when(Configuratie == "Zeeschelde" ~ 65, .default = start),
-    end = case_when(Configuratie == "Dijle" ~ 122,
-                    Configuratie == "Nete" ~ 143, .default = NA)) %>% 
+    end = case_when(Configuratie == "Nete" ~ 121,
+                    Configuratie == "Dijle" ~ 121,
+                    Configuratie == "Zenne" ~ 120.95,
+                    Configuratie == "Durme" ~ 125, .default = NA)) %>% 
   relocate(start, .before = end) %>% 
-  select(-Segment) %>% 
+  select(-SegmentNaam) %>% 
   distinct()
 
 # Koppel de start en end gegevens aan de DD-data
@@ -146,8 +147,8 @@ dd_prepared <- resultaat_dd %>%
   inner_join(segments, by = "Configuratie") %>%
   group_by(Configuratie) %>%
   mutate(
-    start = coalesce(start, min(Dist_Vlis, na.rm = TRUE)),
-    end   = coalesce(end, max(Dist_Vlis, na.rm = TRUE))) %>%
+    start = coalesce(start, min(AfstVlis, na.rm = TRUE)),
+    end   = coalesce(end, max(AfstVlis, na.rm = TRUE))) %>%
   ungroup()
 
 summary(dd_prepared)
@@ -164,10 +165,10 @@ dd_interpolated <- dd_prepared %>%
   # Bepaal het gewenste grid per segment
   grid_x <- seq(unique(start), unique(end), by = 0.05)
   # Lineaire interpolatie
-  res <- approx(x = Dist_Vlis, y = Value, xout = grid_x, rule = 1)
+  res <- approx(x = AfstVlis, y = Value, xout = grid_x, rule = 1)
 
   tibble(
-    Dist_Vlis = res$x,
+    AfstVlis = res$x,
     Value     = res$y)
   })
 
@@ -182,11 +183,10 @@ summary(dd_interpolated)
 dd_interpolated <- dd_interpolated %>%
   left_join(segments %>% select(-end)) %>% 
   mutate(
-    Afstand_vertakking = case_when(Configuratie == "Zeeschelde" ~ Dist_Vlis, .default = Dist_Vlis - start),
+    AfstMonding = case_when(Configuratie == "Zeeschelde" ~ AfstVlis, .default = AfstVlis - start),
     # Afronden op 2 decimalen om floating point errors (zoals 1.42e-14) te verwijderen
-    across(c(Afstand_vertakking, Dist_Vlis, Value), \(x) round(x, digits = 2))) %>% 
+    across(c(AfstMonding, AfstVlis, Value), \(x) round(x, digits = 2))) %>% 
   select(-start)
-
 ```
 
 ```{r DD kruistabel maken}
@@ -196,30 +196,28 @@ dd_kruistabel <- dd_interpolated %>%
   relocate(DD_5, .before = DD_10) 
 
 allocatie_rev <- allocatiegrid_db %>%
-  rename(Afstand_vertakking = Dist_new,
-         Segment = Segment_name) %>%
-  mutate(Configuratie = case_when(Segment %in% c("Beneden Dijle", "Dijle") ~ "Dijle",
-                                  Segment %in% c("Beneden Nete", "Grote Nete") ~ "Nete", .default = Segment),
-         Afstand_vertakking = round(Afstand_vertakking, digits = 2)) %>% 
-  select(Configuratie, Segment, Afstand_vertakking, AllocNR) 
+  mutate(Configuratie = case_when(SegmentNaam %in% c("Beneden Dijle", "Dijle") ~ "Dijle",
+                                  SegmentNaam %in% c("Beneden Nete", "Grote Nete") ~ "Nete", .default = SegmentNaam),
+         AfstMonding = round(AfstMonding, digits = 2)) %>% 
+  select(Configuratie, SegmentNaam, AfstMonding, AllocNR) 
 
 allocatie_rev <- allocatie_rev %>% distinct()
 
 dd_kruistabel <- dd_kruistabel %>% 
   left_join(allocatie_rev) %>% 
   relocate(AllocNR, .before = DD_5) %>% 
-  relocate(Segment, .before = Dist_Vlis) 
+  relocate(SegmentNaam, .before = AfstVlis) 
 
-# view(allocatie_rev %>% 
-#   count(Configuratie, Afstand_vertakking) %>% 
+# view(allocatie_rev %>%
+#   count(Configuratie, AfstMonding) %>%
 #   filter(n > 1))
 
 view(dd_kruistabel %>% filter(is.na(AllocNR)))
-# n=8 - Segment mismatches thv mondingspunten - idem als test2
-# n=1 - Allocatiegrid van de Durme start maar bij 0.1 dus 0.5 valt uit de boot
+# n=7 - Segment mismatches thv mondingspunten - idem als test2, zonder Kleine Nete
+# n=2 - Allocatiegrid met allocatie Durme start maar bij 0.1 dus 0.5 valt uit de boot, idem voor trGM
 
 # waar komt die ene extra rij vandaan??
-# 3 enkele cellen binnen het allocatiegrid met toewijzing Dijle en afstand tot de vertakking van 1.25 -> aangepast & opgelost!
+# 3 enkele cellen binnen het allocatiegrid met toewijzing Dijle en afstand tot de vertakking van 1.25 -> reeds aangepast & opgelost!
 ```
 
 ```{r functie figuren maken}
@@ -242,10 +240,10 @@ plot_configuratie <- function(config_name, interpolated_data = dd_interpolated, 
     "trGM"                               = c("trGM")
   )
   
-  # 2. Haal de Dist_Vlis op waar Afstand_vertakking == 0 voor de gebruikte segmenten
+  # 2. Haal de AfstVlis op waar AfstMonding == 0 voor de gebruikte segmenten
   vline_vals <- raw_data %>%
-    filter(Segment %in% segments_fig & Afstand_vertakking == 0) %>%
-    pull(Dist_Vlis) %>%
+    filter(SegmentNaam %in% segments_fig & AfstMonding == 0) %>%
+    pull(AfstVlis) %>%
     unique()
   
   # Voeg extra vline toe voor specifieke configuraties
@@ -263,17 +261,17 @@ plot_configuratie <- function(config_name, interpolated_data = dd_interpolated, 
   df_plot <- interpolated_data %>% filter(Configuratie == config_name)
   
   # 4. Filter de originele ruwe data op basis van de segmenten
-  df_raw_plot <- raw_data %>% filter(Segment %in% segments_fig)
+  df_raw_plot <- raw_data %>% filter(SegmentNaam %in% segments_fig)
   
   # 5. Maak de ggplot grafiek
-  ggplot(df_plot, aes(x = Dist_Vlis, y = Value, color = factor(.data[[var_name]]))) +
+  ggplot(df_plot, aes(x = AfstVlis, y = Value, color = factor(.data[[var_name]]))) +
     geom_line(linewidth = 1) +
     geom_point(size = 1.5) +
     
     # Toevoeging van de originele (niet geïnterpoleerde) waarden als zwarte ruit
     geom_point(
       data = df_raw_plot,
-      aes(x = Dist_Vlis, y = Value),
+      aes(x = AfstVlis, y = Value),
       color = "black",
       shape = 18,
       size = 2.5,
@@ -290,7 +288,7 @@ plot_configuratie <- function(config_name, interpolated_data = dd_interpolated, 
     ) +
     labs(
       title = paste(config_name),
-      x = "Dist_Vlis (km)",
+      x = "AfstVlis (km)",
       y = "Waarde",
       color = var_name
     ) +
@@ -309,7 +307,7 @@ plot_configuratie <- function(config_name, interpolated_data = dd_interpolated, 
 p0 <- plot_configuratie("Zeeschelde")
 p1 <- plot_configuratie("Rupel")
 p2 <- plot_configuratie("Nete")
-p3 <- plot_configuratie("Kleine Nete")
+# p3 <- plot_configuratie("Kleine Nete")
 p4 <- plot_configuratie("Dijle")
 p5 <- plot_configuratie("Zenne")
 p6 <- plot_configuratie("Durme")
@@ -319,7 +317,7 @@ p8 <- plot_configuratie("trGM")
 print(p0)
 print(p1)
 print(p2)
-print(p3)
+# print(p3)
 print(p4)
 print(p5)
 print(p6)
@@ -337,7 +335,7 @@ plot_list <- list(
 "Zeeschelde"        = p0,
 "Rupel"             = p1,
 "Nete"              = p2,
-"Kleine Nete"       = p3,
+# "Kleine Nete"       = p3,
 "Dijle"             = p4,
 "Zenne"             = p5,
 "Durme"             = p6,
