@@ -5,7 +5,7 @@
 # 
 # Created on 25/01/2020 by Amber Mertens; edited by Nicolas Vanermen
 # Last edited on: 31/07/2026
-# Last run: 03/08/2026 - 17:40
+# Last run: 06/08/2026 - 14:00
 #
 # Version: Python 27
 #
@@ -88,7 +88,7 @@ print("Inputs")
 
 # ---- Allocatielayer ----
 # Make a temporary layer from the allocatielayer
-feature_class = os.path.join(alloc_gdb, "AllocatieAspntScheldeRupelbekkenETRS_ECOTIDE_BL")
+feature_class = os.path.join(alloc_gdb, "AllocatieAspntScheldeRupelbekken_BL_ECOTIDE")
 arcpy.MakeFeatureLayer_management(feature_class, "allocatie_lyr")
 
 # ---- DTM ----

@@ -5,7 +5,7 @@
 #
 # Created on: 25/06/2018
 # Last edited on: 03/08/2026 by Nicolas Vanermen
-# Last run on: 04/08/2026 12:25
+# Last run on: 07/08/2026 15:05
 # 
 # Version: Python 27
 #
@@ -83,8 +83,9 @@ DD_kaart = os.path.join(output_dir, DD_gdb_name, "Vogelmodel_DD_" + alternative_
 slope_gdb_name = "input_slope_" + alternative_scenario + ".gdb"
 slope_kaart = os.path.join(output_dir, slope_gdb_name, "Vogelmodel_slope_" + alternative_scenario)
 
-telgebied_gdb_name = "vogelteltrajecten.gdb"
-telgebieden_kaart = os.path.join(data_dir, telgebied_gdb_name, "Vogelteltrajecten_" + alternative)
+telgebied_gdb_name = "vogelteltrajecten_topology.gdb"
+telgebied_dataset_name = "Vogelteltrajecten_" + alternative
+telgebieden_kaart = os.path.join(data_dir, telgebied_gdb_name, telgebied_dataset_name, "Vogelteltrajecten_" + alternative)
 
 # --------------------
 # ------ OUPUTS ------
